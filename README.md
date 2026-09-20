@@ -8,7 +8,8 @@ workspaces in a sidebar, each one a grid of terminals you can split, fold and
 rearrange, driven entirely from the keyboard. Close the app, reopen it, and
 everything is exactly where you left it.
 
-Windows · free · updates itself.
+Windows · free · updates itself. Website and documentation:
+**[openterm.app](https://www.openterm.app)**.
 
 ### [⬇ Download the latest release](https://github.com/SurviveANDcraft/OpenTerm/releases/latest)
 
@@ -90,6 +91,12 @@ Everything is keyboard-first and every shortcut is rebindable in Settings.
 | Zoom / fold pane | `Ctrl+Shift+Z` / `Ctrl+Shift+D` |
 | Find in terminal | `Ctrl+Shift+F` |
 | Cheat sheet · Settings | `Ctrl+/` · `Ctrl+,` |
+
+## Links
+
+- [openterm.app](https://www.openterm.app) — website
+- [Documentation](https://www.openterm.app/documentation) — every feature, and every shortcut
+- [Releases](https://github.com/SurviveANDcraft/OpenTerm/releases) — downloads and changelog
 
 ## Install
 
