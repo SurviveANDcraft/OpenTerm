@@ -1,0 +1,343 @@
+/* Dictation overlay: pill + screen glow. Shared by the agent's overlay windows
+   and the Settings simulator. Theme tokens only; only transform and opacity
+   change at runtime. */
+
+.dict-overlay-body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.dict-overlay-body .dp-stage,
+.dict-overlay-body .dg-stage {
+  position: fixed;
+}
+
+.dp-stage,
+.dg-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  color: var(--text);
+  contain: strict;
+}
+
+.dp-pill,
+.dp-dot,
+.dp-content,
+.dp-hint {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform, opacity;
+  opacity: 0;
+}
+
+/* ---------- capsule ---------- */
+
+.dp-pill {
+  width: 0;
+  height: 44px;
+  /* A shadow tinted with the theme accent: the pill reads on any wallpaper. */
+  filter: drop-shadow(0 10px 22px color-mix(in srgb, var(--accent) 18%, rgb(0 0 0 / 0.44)))
+    drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 10%, transparent))
+    drop-shadow(0 1px 2px rgb(0 0 0 / 0.28));
+}
+
+.dp-clickable .dp-pill {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.dp-surface,
+.dp-ring {
+  position: absolute;
+  inset: 0;
+}
+
+/* Group opacity, so the overlapping pieces never show a seam. */
+.dp-surface {
+  opacity: 0.94;
+}
+
+.dp-cap,
+.dp-mid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 44px;
+  transform-origin: 0 0;
+}
+
+.dp-cap {
+  width: 22px;
+  overflow: hidden;
+}
+
+.dp-cap-disc {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+
+.dp-cap-r .dp-cap-disc {
+  transform: translateX(-22px);
+}
+
+.dp-mid {
+  width: 100px;
+}
+
+/* Glass body: a vertical-only gradient (so the scaled middle never distorts
+   it) with a lit upper half and a slightly deeper base. */
+.dp-surface .dp-cap-disc,
+.dp-surface .dp-mid {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--text) 7%, var(--bg-raised)) 0%,
+    color-mix(in srgb, var(--text) 2%, var(--bg-raised)) 48%,
+    var(--bg-raised) 52%,
+    color-mix(in srgb, #000 10%, var(--bg-raised)) 100%
+  );
+}
+
+/* Specular line just inside the top edge; the rim canvas draws the outline. */
+.dp-surface .dp-cap-disc {
+  box-shadow: inset 0 2px 1px -1px color-mix(in srgb, #fff 9%, transparent);
+}
+
+.dp-surface .dp-mid {
+  box-shadow: inset 0 2px 1px -1px color-mix(in srgb, #fff 9%, transparent);
+}
+
+.dp-rim {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  pointer-events: none;
+}
+
+.dp-ring {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.dp-ring .dp-cap-disc {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.dp-ring .dp-mid {
+  box-shadow: inset 0 1px 0 var(--danger), inset 0 -1px 0 var(--danger);
+}
+
+.dp-error .dp-ring {
+  opacity: 1;
+}
+
+.dp-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform-origin: 50% 50%;
+}
+
+/* ---------- thinking sweep ---------- */
+
+.dp-clip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 168px;
+  height: 44px;
+  border-radius: 22px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+}
+
+.dp-thinking .dp-clip {
+  opacity: 1;
+}
+
+.dp-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--text) 6%, transparent) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+}
+
+.dp-thinking .dp-sweep {
+  animation: dp-sweep 1.6s cubic-bezier(0.45, 0, 0.35, 1) infinite;
+}
+
+@keyframes dp-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* ---------- content (centered on the capsule) ---------- */
+
+.dp-content {
+  width: 0;
+  height: 0;
+}
+
+.dp-bars {
+  position: absolute;
+  left: -75px;
+  top: -22px;
+  transition: transform 360ms cubic-bezier(0.32, 0.72, 0, 1), opacity 140ms ease-out;
+}
+
+.dp-show-timer .dp-bars {
+  transform: translateX(-28px);
+}
+
+.dp-show-label .dp-bars {
+  opacity: 0;
+  transition-delay: 0ms, 160ms;
+}
+
+.dp-timer {
+  position: absolute;
+  right: -96px;
+  top: 0;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 280ms ease-out;
+}
+
+.dp-show-timer .dp-timer {
+  opacity: 1;
+}
+
+.dp-countdown-on .dp-timer {
+  color: var(--accent);
+}
+
+.dp-countdown {
+  position: absolute;
+  left: 51px;
+  top: -7px;
+  opacity: 0;
+  transition: opacity 280ms ease-out;
+}
+
+.dp-countdown-on .dp-countdown {
+  opacity: 1;
+}
+
+.dp-label {
+  position: absolute;
+  top: 0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  color: var(--text);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(4px, -50%);
+  transition: opacity 220ms ease-out 120ms, transform 320ms cubic-bezier(0.32, 0.72, 0, 1) 120ms;
+}
+
+.dp-show-label .dp-label {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.dp-check {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.dp-hint {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  translate: -50% 0;
+  text-shadow: 0 1px 3px color-mix(in srgb, var(--bg-raised) 80%, transparent);
+}
+
+/* ---------- screen glow ---------- */
+
+.dg-edge {
+  position: absolute;
+  opacity: 0;
+  will-change: transform, opacity;
+  /* Multi-stop falloff: a soft, eased fade inward instead of a linear band. */
+  --dg-a: color-mix(in srgb, var(--accent) 78%, transparent);
+  --dg-b: color-mix(in srgb, var(--accent) 34%, transparent);
+  --dg-c: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.dg-top,
+.dg-bottom {
+  left: 0;
+  right: 0;
+  height: 64px;
+}
+
+.dg-left,
+.dg-right {
+  top: 0;
+  bottom: 0;
+  width: 64px;
+}
+
+.dg-top {
+  top: 0;
+  transform-origin: 50% 0;
+  background: linear-gradient(to bottom, var(--dg-a), var(--dg-b) 30%, var(--dg-c) 62%, transparent);
+}
+
+.dg-bottom {
+  bottom: 0;
+  transform-origin: 50% 100%;
+  background: linear-gradient(to top, var(--dg-a), var(--dg-b) 30%, var(--dg-c) 62%, transparent);
+}
+
+.dg-left {
+  left: 0;
+  transform-origin: 0 50%;
+  background: linear-gradient(to right, var(--dg-a), var(--dg-b) 30%, var(--dg-c) 62%, transparent);
+}
+
+.dg-right {
+  right: 0;
+  transform-origin: 100% 50%;
+  background: linear-gradient(to left, var(--dg-a), var(--dg-b) 30%, var(--dg-c) 62%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dp-thinking .dp-sweep {
+    animation: none;
+    opacity: 0;
+  }
+  .dp-bars,
+  .dp-label {
+    transition: opacity 180ms ease-out;
+  }
+}

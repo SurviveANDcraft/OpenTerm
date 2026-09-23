@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenTerm Dev",
+  "identifier": "com.openterm.app.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "OpenTerm (dev)",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 760,
+        "minHeight": 480,
+        "dragDropEnabled": true,
+        "decorations": false,
+        "backgroundColor": "#0b0d10"
+      }
+    ]
+  }
+}

@@ -1,0 +1,2162 @@
+/* ================= Tasks panel =================
+ *
+ * Layout contract (keep these consistent — the old sheet drifted between
+ * 8/9/10/12/14/16px paddings and three control heights in a single row):
+ *   spacing scale   4 / 8 / 12 / 16 / 20
+ *   control height  --tk-ctl (28px) for every button, input and segment
+ *   radii           modal 16 · column & card 10 · control 8 · chip 6 · filter pill
+ */
+
+.tasks {
+  --tk-ctl: 28px;
+  --tk-pad: 20px;
+  --tk-r-card: 10px;
+  --tk-r-ctl: 8px;
+  --tk-r-chip: 6px;
+  --tk-drawer: 348px;
+
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 106;
+  background: color-mix(in srgb, var(--bg-pane) 70%, transparent);
+  backdrop-filter: blur(6px) saturate(115%);
+  place-items: center;
+}
+
+.tasks.visible {
+  display: grid;
+  animation: tasks-scrim-in 160ms var(--ease-out);
+}
+
+@keyframes tasks-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.tasks-card {
+  width: min(1180px, calc(100vw - 64px));
+  height: min(780px, calc(100vh - 72px));
+  background: var(--bg-sidebar);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: tasks-modal-in 240ms var(--ease-out);
+}
+
+@keyframes tasks-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks.visible,
+  .tasks-card {
+    animation: none;
+  }
+}
+
+/* Shared focus treatment — the old sheet had none, so keyboard users had to
+   guess where they were. */
+.tasks :focus-visible,
+.deleg-popover :focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ---- header ---- */
+
+.tasks-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px var(--tk-pad) 12px;
+  flex-shrink: 0;
+}
+
+.tasks-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.tasks-heading h2 {
+  font-family: var(--ui-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.tasks-subtitle {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tasks-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tasks-new-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--tk-ctl);
+  padding: 0 14px;
+  border-radius: var(--tk-r-ctl);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  transition: filter var(--t-fast), transform var(--t-fast);
+}
+
+.tasks-new-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.tasks-new-btn:hover {
+  filter: brightness(1.08);
+}
+
+.tasks-new-btn:active {
+  transform: translateY(1px);
+}
+
+.tasks-icon-btn {
+  display: grid;
+  place-items: center;
+  width: var(--tk-ctl);
+  height: var(--tk-ctl);
+  border-radius: var(--tk-r-ctl);
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-icon-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tasks-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---- toolbar: search · filters · view / scope switches ---- */
+
+.tasks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--tk-pad) 14px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.tasks-search {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 140px;
+  max-width: 360px;
+}
+
+.tasks-search svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.tasks-search input {
+  width: 100%;
+  height: var(--tk-ctl);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  padding: 0 10px 0 28px;
+  outline: none;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-search input::placeholder {
+  color: var(--text-faint);
+}
+
+.tasks-search input:hover {
+  border-color: var(--hover-line);
+}
+
+.tasks-search input:focus {
+  border-color: var(--accent);
+  background: var(--bg-sidebar);
+}
+
+.tasks-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Segmented switch — one component for both the view and the scope switch, so
+   they read as the same control instead of two near-misses. */
+.tasks-view-toggle {
+  display: flex;
+  gap: 2px;
+  height: var(--tk-ctl);
+  padding: 2px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  flex-shrink: 0;
+}
+
+.tasks-view-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: calc(var(--tk-r-ctl) - 3px);
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-view-toggle button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tasks-view-toggle button:hover {
+  color: var(--text-dim);
+}
+
+.tasks-view-toggle button.active {
+  background: var(--elev-3);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* ---- filter chips ---- */
+
+/* A board can have many stages, so the chip strip scrolls instead of pushing
+   the switches off the end of the toolbar. */
+.tasks-filters {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-right: 2px;
+}
+
+.tasks-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.tasks-filters.hidden {
+  display: none;
+}
+
+.tasks-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: var(--tk-ctl);
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+
+.tasks-filter-chip:hover {
+  color: var(--text);
+  border-color: var(--hover-line);
+}
+
+.tasks-filter-chip.active {
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-text);
+}
+
+.tasks-filter-count {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.tasks-filter-chip.active .tasks-filter-count {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* ---- body layout ---- */
+
+/* Two tracks: the board, and a details column that is 0 wide until a task is
+   selected. Animating the track (rather than sliding an overlay over the board)
+   is what makes the drawer physically push the columns aside. */
+.tasks-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0px;
+  overflow: hidden;
+  transition: grid-template-columns 280ms var(--ease-out);
+}
+
+.tasks-body.with-drawer {
+  grid-template-columns: minmax(0, 1fr) var(--tk-drawer);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks-body {
+    transition: none;
+  }
+}
+
+.tasks-main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px var(--tk-pad) 20px;
+}
+
+.tasks-main.kanban-mode {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* ---- empty state ---- */
+
+.tasks-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 260px;
+  text-align: center;
+  color: var(--text-dim);
+  gap: 6px;
+}
+
+.tasks-empty-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 10px;
+  border-radius: 50%;
+  background: var(--elev-2);
+  border: 1px solid var(--hairline);
+  color: var(--text-faint);
+}
+
+.tasks-empty-mark svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tasks-empty p {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.tasks-dim {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.tasks-empty .tasks-dim {
+  max-width: 36ch;
+  line-height: 1.5;
+}
+
+.tasks-empty-cta {
+  margin-top: 14px;
+}
+
+/* ---- list view: status groups ---- */
+
+.tasks-status-group {
+  margin-bottom: 20px;
+}
+
+.tasks-status-group:last-child {
+  margin-bottom: 0;
+}
+
+.tasks-group-head,
+.tasks-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.tasks-group-head {
+  padding: 0 4px 8px;
+}
+
+.tasks-group-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+
+.tasks-group-todo .tasks-group-dot {
+  background: var(--text-dim);
+}
+
+.tasks-group-doing .tasks-group-dot {
+  background: var(--info);
+}
+
+.tasks-group-done .tasks-group-dot {
+  background: var(--success);
+}
+
+.tasks-group-count,
+.tasks-col-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--elev-2);
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* ---- stage header controls (shared by list groups and board columns) ---- */
+
+.tasks-stage-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-stage-done-flag {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
+  flex: none;
+}
+
+.tasks-stage-done-flag svg {
+  width: 8px;
+  height: 8px;
+}
+
+/* Matches the header text it replaces, so renaming reads as editing the title
+   in place rather than as a form appearing on top of it. */
+.tasks-stage-rename {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--bg-app);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 2px 6px;
+  margin: -3px 0;
+  outline: none;
+}
+
+.tasks-stage-menu-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -2px -4px -2px 0;
+  border-radius: 5px;
+  color: var(--text-faint);
+  opacity: 0;
+  flex: none;
+  transition: opacity var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-stage-menu-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tasks-col:hover .tasks-stage-menu-btn,
+.tasks-col:focus-within .tasks-stage-menu-btn,
+.tasks-status-group:hover .tasks-stage-menu-btn,
+.tasks-status-group:focus-within .tasks-stage-menu-btn,
+.tasks-stage-menu-btn:focus-visible {
+  opacity: 1;
+}
+
+.tasks-stage-menu-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* The list view's own "add a stage" affordance: a full-width dashed row where
+   the next group would begin. */
+.tasks-add-stage-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: var(--tk-ctl);
+  margin-top: 4px;
+  border: 1px dashed var(--border);
+  border-radius: var(--tk-r-ctl);
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-add-stage-row svg {
+  width: 10px;
+  height: 10px;
+}
+
+.tasks-add-stage-row:hover {
+  border-color: var(--hover-line);
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---- the board's vertical "add stage" rail ---- */
+
+/* The slot is always as wide as the rail at its widest, so the hover growth is
+   absorbed here instead of reflowing the columns or shrinking the board's
+   right-hand padding. The rail is pinned to the slot's right edge and expands
+   leftward into the reserved sliver. */
+.tasks-add-stage-slot {
+  flex: 0 0 56px;
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tasks-add-stage {
+  width: 44px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--tk-r-card);
+  background: var(--elev-1);
+  color: var(--text-faint);
+  transition: width 220ms var(--ease-out), border-color var(--t-fast),
+    color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-add-stage svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Sideways label, so the collapsed rail still says what it does. */
+.tasks-add-stage-label {
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tasks-add-stage:hover,
+.tasks-add-stage:focus-visible {
+  width: 56px;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-sidebar));
+  color: var(--accent-text);
+}
+
+.tasks-add-stage:active {
+  transform: translateY(1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks-add-stage {
+    transition: none;
+  }
+}
+
+.tasks-group-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--tk-r-card);
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.tasks-status-group.drop-active .tasks-group-empty {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ---- list rows ---- */
+
+.tasks-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  min-height: 42px;
+  border-radius: var(--tk-r-card);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
+  position: relative;
+}
+
+.tasks-row:hover {
+  background: var(--bg-hover);
+}
+
+.tasks-row.selected {
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tasks-status-pill {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  display: grid;
+  place-items: center;
+  color: transparent;
+  transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-status-pill svg {
+  width: 10px;
+  height: 10px;
+}
+
+.tasks-status-pill:hover {
+  border-color: var(--text-dim);
+}
+
+.tasks-status-pill.tasks-status-doing {
+  border-color: var(--info);
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+}
+
+.tasks-status-pill.tasks-status-done {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--bg-app);
+}
+
+.tasks-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tasks-row.done .tasks-row-title {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.tasks-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Inside a kanban card the meta row goes back to reading left-to-right under
+   the title, since there is no long free run to the right of it. */
+.tasks-card2-meta {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+/* Row and card affordances share one geometry so the hover cluster never
+   shifts the content beside it. */
+.tasks-row-trash {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--tk-r-chip);
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-row-trash svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tasks-row:hover .tasks-row-trash,
+.tasks-row:focus-within .tasks-row-trash,
+.tasks-card2:hover .tasks-row-trash,
+.tasks-card2:focus-within .tasks-row-trash {
+  opacity: 1;
+}
+
+.tasks-row-trash:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+/* ---- shared chips (rows + cards + drawer) ---- */
+
+.tasks-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 7px;
+  border-radius: var(--tk-r-chip);
+  background: var(--elev-1);
+  border: 1px solid var(--border-soft);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.tasks-chip svg {
+  width: 9px;
+  height: 9px;
+}
+
+.tasks-chip.tasks-prio {
+  color: var(--c, var(--text-dim));
+  background: color-mix(in srgb, var(--c, var(--text-dim)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--c, var(--border)) 32%, transparent);
+}
+
+.tasks-chip.tasks-due.overdue {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+}
+
+.tasks-chip.tasks-tag {
+  color: var(--accent-text);
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.tasks-session-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.tasks-chip.removable {
+  height: 21px;
+  padding-right: 4px;
+}
+
+.tasks-chip.removable button {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  color: inherit;
+  opacity: 0.65;
+  transition: opacity var(--t-fast), background var(--t-fast);
+}
+
+.tasks-chip.removable button svg {
+  width: 8px;
+  height: 8px;
+}
+
+.tasks-chip.removable button:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+/* ---- kanban ---- */
+
+/* Columns share the board's width rather than sitting in a fixed 292px strip
+   with dead space to their right; below 260px each they start scrolling
+   horizontally instead of squeezing further. */
+.tasks-col {
+  flex: 1 1 280px;
+  min-width: 260px;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--elev-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--tk-r-card);
+  padding: 12px;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+/* With the drawer out, the board has ~350px less room: let the columns pack a
+   little tighter before falling back to horizontal scrolling. */
+.tasks-body.with-drawer .tasks-col {
+  min-width: 240px;
+}
+
+.tasks-col.drop-active {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--elev-1));
+}
+
+.tasks-col-head {
+  padding: 0 2px 12px;
+  flex-shrink: 0;
+}
+
+.tasks-col-count {
+  margin-left: auto;
+}
+
+.tasks-col-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 56px;
+}
+
+.tasks-col-body > * {
+  flex-shrink: 0;
+}
+
+/* Only shown while a column has no cards, so the column still reads as a drop
+   target instead of as a gap between two other columns. */
+.tasks-col-empty {
+  display: grid;
+  place-items: center;
+  padding: 18px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--tk-r-card);
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.tasks-col.drop-active .tasks-col-empty {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: var(--accent-text);
+}
+
+.tasks-col-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 0;
+  height: var(--tk-ctl);
+  border-radius: var(--tk-r-ctl);
+  border: 1px dashed var(--border);
+  color: var(--text-faint);
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+}
+
+.tasks-col-add svg {
+  width: 10px;
+  height: 10px;
+}
+
+.tasks-col-add:hover {
+  background: var(--bg-hover);
+  border-color: var(--hover-line);
+  color: var(--text);
+}
+
+.tasks-card2 {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-card);
+  padding: 11px 12px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+  position: relative;
+}
+
+.tasks-card2:hover {
+  border-color: var(--hover-line);
+  transform: translateY(-1px);
+}
+
+.tasks-card2.selected {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
+}
+
+/* Title and the hover-revealed actions share one row; priority is carried by
+   the chip below, so the old lone dot no longer floats on an empty line. */
+.tasks-card2-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tasks-card2-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.tasks-card2-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin: -2px -4px 0 0;
+}
+
+.tasks-prio-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--c, var(--text-faint));
+  flex: none;
+}
+
+.tasks-card2-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--elev-3);
+  margin-top: 11px;
+  overflow: hidden;
+}
+
+.tasks-card2-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success);
+}
+
+/* ---- drawer ---- */
+
+/* Always in the grid, clipped to a zero-width track when closed — its contents
+   keep their full width inside, so the panel slides in as one piece instead of
+   reflowing as it opens. */
+.tasks-drawer {
+  display: flex;
+  flex-direction: column;
+  width: var(--tk-drawer);
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--hairline);
+  background: var(--elev-1);
+  opacity: 0;
+  transition: opacity 180ms var(--ease-out);
+}
+
+.tasks-drawer.visible {
+  opacity: 1;
+  transition-delay: 60ms;
+}
+
+.tasks-drawer > * {
+  width: var(--tk-drawer);
+  flex-shrink: 0;
+}
+
+.tasks-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+  flex-shrink: 0;
+}
+
+.tasks-drawer-head span {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.tasks-drawer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The drawer scrolls, so its children must keep their natural height — as flex
+   items they would otherwise shrink to fit and clip their own content. */
+.tasks-drawer-scroll > * {
+  flex: none;
+}
+
+.tasks-drawer-title {
+  font: inherit;
+  font-family: var(--ui-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  padding: 0 0 10px;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  transition: border-color var(--t-fast);
+}
+
+.tasks-drawer-title::placeholder {
+  color: var(--text-faint);
+}
+
+.tasks-drawer-title:focus {
+  border-bottom-color: var(--accent);
+}
+
+.tasks-drawer-title:focus-visible {
+  box-shadow: none;
+}
+
+.tasks-field label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+.tasks-segmented {
+  display: flex;
+  gap: 2px;
+  height: var(--tk-ctl);
+  padding: 2px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+}
+
+.tasks-seg-btn {
+  flex: 1;
+  border-radius: calc(var(--tk-r-ctl) - 3px);
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-seg-btn:hover {
+  color: var(--text-dim);
+}
+
+.tasks-seg-btn.active {
+  background: var(--elev-3);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.tasks-seg-status .tasks-seg-doing.active {
+  color: var(--info);
+}
+
+.tasks-seg-status .tasks-seg-done.active {
+  color: var(--success);
+}
+
+.tasks-seg-priority .tasks-seg-high.active {
+  color: var(--danger);
+}
+
+.tasks-seg-priority .tasks-seg-medium.active {
+  color: var(--accent-text);
+}
+
+.tasks-seg-priority .tasks-seg-low.active {
+  color: var(--info);
+}
+
+.tasks-due-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tasks-due-row input {
+  flex: 1;
+  min-width: 0;
+  height: var(--tk-ctl);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  padding: 0 10px;
+  outline: none;
+  color-scheme: dark;
+  transition: border-color var(--t-fast);
+}
+
+.tasks-due-row input:hover {
+  border-color: var(--hover-line);
+}
+
+.tasks-due-row input:focus {
+  border-color: var(--accent);
+}
+
+.tasks-tags-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: var(--tk-ctl);
+  padding: 4px 8px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  transition: border-color var(--t-fast);
+}
+
+.tasks-tags-box:focus-within {
+  border-color: var(--accent);
+}
+
+.tasks-tag-input {
+  flex: 1;
+  min-width: 70px;
+  height: 20px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.tasks-tag-input::placeholder {
+  color: var(--text-faint);
+}
+
+.tasks-tag-input:focus-visible {
+  box-shadow: none;
+}
+
+.tasks-desc {
+  display: block;
+  width: 100%;
+  min-height: 84px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  padding: 9px 10px;
+  outline: none;
+  resize: vertical;
+  transition: border-color var(--t-fast);
+}
+
+.tasks-desc::placeholder {
+  color: var(--text-faint);
+}
+
+.tasks-desc:hover {
+  border-color: var(--hover-line);
+}
+
+.tasks-desc:focus {
+  border-color: var(--accent);
+}
+
+.tasks-subtasks {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 8px;
+}
+
+.tasks-subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-radius: var(--tk-r-chip);
+}
+
+.tasks-subtask-row:hover {
+  background: var(--bg-hover);
+}
+
+.tasks-subtask-check {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1.5px solid var(--text-faint);
+  display: grid;
+  place-items: center;
+  color: transparent;
+  transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+
+.tasks-subtask-check:hover {
+  border-color: var(--text-dim);
+}
+
+.tasks-subtask-check svg {
+  width: 9px;
+  height: 9px;
+}
+
+.tasks-subtask-row.done .tasks-subtask-check {
+  border-color: var(--success);
+  background: var(--success);
+  color: var(--bg-app);
+}
+
+.tasks-subtask-title {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 2px 0;
+}
+
+.tasks-subtask-title:focus-visible {
+  box-shadow: none;
+}
+
+.tasks-subtask-row.done .tasks-subtask-title {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.tasks-subtask-del {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  opacity: 0;
+  border-radius: 4px;
+  transition: opacity var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-subtask-del svg {
+  width: 8px;
+  height: 8px;
+}
+
+.tasks-subtask-row:hover .tasks-subtask-del,
+.tasks-subtask-row:focus-within .tasks-subtask-del {
+  opacity: 1;
+}
+
+.tasks-subtask-del:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.tasks-subtask-add,
+.tasks-attach-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--tk-ctl);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--tk-r-ctl);
+  outline: none;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-subtask-add {
+  justify-content: flex-start;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.tasks-subtask-add::placeholder {
+  color: var(--text-faint);
+}
+
+.tasks-subtask-add:hover,
+.tasks-attach-btn:hover {
+  border-color: var(--hover-line);
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tasks-subtask-add:focus {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tasks-attach-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
+.tasks-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.tasks-file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--tk-ctl);
+  padding: 0 6px 0 9px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--tk-r-ctl);
+  transition: border-color var(--t-fast);
+}
+
+.tasks-file-chip:hover {
+  border-color: var(--border);
+}
+
+.tasks-file-chip span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tasks-file-chip span:hover {
+  color: var(--text);
+}
+
+.tasks-file-chip span svg {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.tasks-file-chip button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  transition: color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-file-chip button svg {
+  width: 8px;
+  height: 8px;
+}
+
+.tasks-file-chip button:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+/* ---- drawer footer ---- */
+
+.tasks-drawer-foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--hairline);
+  background: var(--elev-1);
+}
+
+/* The created stamp gets its own line — sharing a row with the buttons is what
+   made it wrap into them at this drawer width. */
+.tasks-drawer-created {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.tasks-drawer-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tasks-drawer-deleg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tasks-delete-btn,
+.tasks-delegate-btn-lg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--tk-ctl);
+  padding: 0 11px;
+  border-radius: var(--tk-r-ctl);
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+
+.tasks-delete-btn {
+  margin-left: auto;
+  color: var(--danger);
+}
+
+.tasks-delete-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.tasks-delete-btn:hover {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+}
+
+.tasks-delegate-btn-lg {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-dim);
+}
+
+.tasks-delegate-btn-lg svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tasks-delegate-btn-lg:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+/* ---- delegation: card buttons, status pills, popover ---- */
+
+/* The row/card robot button reuses .tasks-row-trash's geometry; tint its icon
+   to the accent so it reads as "do something", not "destructive". */
+.tasks-delegate-btn svg {
+  color: var(--accent);
+}
+
+.tasks-delegate-btn:hover {
+  background: var(--accent-dim);
+}
+
+button.tasks-deleg-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  cursor: pointer;
+  font-size: inherit;
+  border-left: 2px solid var(--accent);
+  border-top-left-radius: 2px;
+  border-bottom-left-radius: 2px;
+}
+
+button.tasks-deleg-pill svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+button.tasks-deleg-pill span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-deleg-running {
+  border-left-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.tasks-deleg-waiting,
+.tasks-deleg-scheduled {
+  border-left-color: var(--status-wait);
+}
+
+.tasks-deleg-failed {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.deleg-popover {
+  position: fixed;
+  z-index: 200;
+  width: 326px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  padding: 14px;
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.deleg-popover.visible {
+  display: flex;
+  animation: deleg-in 140ms var(--ease-out);
+}
+
+/* Kept on screen just long enough to collapse back into its anchor button. */
+.deleg-popover.closing {
+  display: flex;
+  pointer-events: none;
+  animation: deleg-out 120ms var(--ease-out) forwards;
+}
+
+@keyframes deleg-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes deleg-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deleg-popover.visible,
+  .deleg-popover.closing {
+    animation: none;
+  }
+}
+
+.deleg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.deleg-head svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
+.deleg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deleg-field > label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.deleg-agents,
+.deleg-whens {
+  display: flex;
+  gap: 6px;
+}
+
+/* Stacked, because "When a terminal finishes…" cannot fit a third of 326px
+   without truncating. */
+.deleg-whens {
+  flex-direction: column;
+}
+
+.deleg-agent-btn,
+.deleg-when-btn {
+  flex: 1;
+  min-height: var(--tk-ctl);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+
+.deleg-when-btn {
+  justify-content: flex-start;
+}
+
+.deleg-agent-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.deleg-agent-btn:hover,
+.deleg-when-btn:hover {
+  color: var(--text);
+  border-color: var(--hover-line);
+}
+
+.deleg-agent-btn.active,
+.deleg-when-btn.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-dim);
+}
+
+.deleg-datetime {
+  width: 100%;
+  height: var(--tk-ctl);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  padding: 0 10px;
+  outline: none;
+  color-scheme: dark;
+}
+
+.deleg-datetime:focus {
+  border-color: var(--accent);
+}
+
+.deleg-panes {
+  max-height: 184px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deleg-pane-btn {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  align-items: center;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  font-size: 12px;
+  color: var(--text);
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+
+.deleg-pane-btn:hover {
+  border-color: var(--hover-line);
+}
+
+.deleg-pane-btn.active {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-dim);
+}
+
+.deleg-pane-last {
+  grid-column: 2;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deleg-panes-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  padding: 6px 0;
+}
+
+.deleg-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.deleg-cancel-btn {
+  height: var(--tk-ctl);
+  padding: 0 11px;
+  border-radius: var(--tk-r-ctl);
+  font-size: 12px;
+  color: var(--danger);
+  flex-shrink: 0;
+  transition: background var(--t-fast);
+}
+
+.deleg-cancel-btn:hover {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.deleg-go-btn {
+  margin-left: auto;
+  height: var(--tk-ctl);
+  padding: 0 14px;
+  border-radius: var(--tk-r-ctl);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: filter var(--t-fast), transform var(--t-fast);
+}
+
+.deleg-go-btn:hover {
+  filter: brightness(1.1);
+}
+
+.deleg-go-btn:active {
+  transform: translateY(1px);
+}
+
+/* ---- stage menu ---- */
+
+.stage-menu {
+  position: fixed;
+  z-index: 200;
+  width: 244px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+  display: none;
+}
+
+/* Same open/close keyframes as the delegate popover, so every anchored popup in
+   the panel moves identically. */
+.stage-menu.visible {
+  display: block;
+  animation: deleg-in 140ms var(--ease-out);
+}
+
+.stage-menu.closing {
+  display: block;
+  pointer-events: none;
+  animation: deleg-out 120ms var(--ease-out) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-menu.visible,
+  .stage-menu.closing {
+    animation: none;
+  }
+}
+
+.stage-menu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stage-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: var(--tk-ctl);
+  padding: 0 9px;
+  border-radius: var(--tk-r-chip);
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.stage-menu-item svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--text-dim);
+}
+
+.stage-menu-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.stage-menu-item:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.stage-menu-item:disabled svg {
+  color: var(--text-faint);
+}
+
+.stage-menu-item.danger {
+  color: var(--danger);
+}
+
+.stage-menu-item.danger svg {
+  color: var(--danger);
+}
+
+.stage-menu-item.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 13%, transparent);
+}
+
+.stage-menu-toggle span:first-of-type {
+  flex: 1;
+}
+
+/* Reads as a switch without needing a real checkbox in a menu row. */
+.stage-switch {
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 15px;
+  border-radius: 999px;
+  background: var(--elev-3);
+  border: 1px solid var(--border);
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+
+.stage-switch::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+
+.stage-switch.on {
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.stage-switch.on::after {
+  transform: translateX(11px);
+  background: var(--accent);
+}
+
+.stage-menu-field {
+  padding: 8px 9px 6px;
+}
+
+.stage-menu-field > label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.stage-swatches {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 5px;
+}
+
+.stage-swatch {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  transition: transform var(--t-fast), box-shadow var(--t-fast);
+}
+
+.stage-swatch.none {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--elev-3),
+    var(--elev-3) 2px,
+    transparent 2px,
+    transparent 4px
+  );
+}
+
+.stage-swatch:hover {
+  transform: scale(1.14);
+}
+
+.stage-swatch.active {
+  box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3.5px var(--accent);
+}
+
+.stage-order {
+  display: flex;
+  gap: 6px;
+}
+
+.stage-order-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: var(--tk-ctl);
+  border: 1px solid var(--border);
+  border-radius: var(--tk-r-ctl);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+
+.stage-order-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.stage-order-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--hover-line);
+  background: var(--bg-hover);
+}
+
+.stage-order-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.stage-menu-confirm {
+  padding: 8px 9px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---- drawer stage picker ---- */
+
+.tasks-stage-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tasks-stage-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--tk-ctl);
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 12px;
+  max-width: 100%;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+
+.tasks-stage-option span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-stage-option:hover {
+  color: var(--text);
+  border-color: var(--hover-line);
+}
+
+.tasks-stage-option.active {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--accent-dim);
+  font-weight: 600;
+}
+
+/* ---- drag & drop: floating clone + in-place placeholder ---- */
+
+body.tasks-dragging,
+body.tasks-dragging * {
+  cursor: grabbing !important;
+}
+
+body.tasks-dragging .tasks-row,
+body.tasks-dragging .tasks-card2 {
+  user-select: none;
+}
+
+.tasks-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 500;
+  margin: 0 !important;
+  pointer-events: none;
+  will-change: transform;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  opacity: 0.97;
+  transition: box-shadow 160ms ease, opacity 160ms ease;
+}
+
+.tasks-drag-ghost.lifted {
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.5), 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.tasks-drag-ghost.settling {
+  transition: transform 220ms cubic-bezier(0.22, 0.9, 0.3, 1), box-shadow 220ms ease,
+    opacity 200ms ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* The real element left behind at the candidate drop slot while its clone is
+ * airborne — keeps the row/card's box (and the layout it holds up) but hides
+ * its content behind a dashed "landing zone" outline. */
+.tasks-drag-placeholder {
+  position: relative;
+  cursor: grabbing;
+}
+
+.tasks-drag-placeholder > * {
+  visibility: hidden;
+}
+
+.tasks-drag-placeholder::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed var(--accent);
+  border-radius: inherit;
+  background: var(--accent-dim);
+}
+
+/* ---- narrow windows ---- */
+
+@media (max-width: 920px) {
+  .tasks {
+    --tk-pad: 14px;
+  }
+
+  .tasks-card {
+    width: calc(100vw - 24px);
+    height: calc(100vh - 32px);
+  }
+
+  .tasks-drawer {
+    width: 296px;
+  }
+
+  .tasks-search {
+    flex-basis: 160px;
+  }
+}

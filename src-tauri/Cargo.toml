@@ -1,0 +1,63 @@
+[package]
+name = "openterm"
+version = "1.0.0"
+description = "OpenTerm — a keyboard-first terminal organizer"
+authors = ["OpenTerm"]
+edition = "2021"
+license = "Elastic-2.0"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# "unstable" gates Window::add_child — the embedded browser panes are real
+# child webviews inside the main window, positioned/resized like docked windows.
+tauri = { version = "2", features = ["protocol-asset", "unstable", "tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
+winreg = "0.55"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Already in the tree via tauri; used directly for non-blocking retry backoff.
+tokio = { version = "1", default-features = false, features = ["time"] }
+portable-pty = "0.9"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+rodio = { version = "0.19", default-features = false, features = ["wav"] }
+trash = "3"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Storage_Xps",
+    "Win32_Security",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_HiDpi",
+] }
+tauri-plugin-clipboard-manager = "2.3.2"
+# OpenCode moved its message store from per-message JSON files into a single
+# SQLite database; "bundled" so no system sqlite is required on Windows.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# OpenRouter prompt refinement (delegate-to-agent) — rustls to avoid
+# pulling in native TLS on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Dictation agent (see src/dictation): mic capture (same cpal as rodio's
+# playback, so one WASAPI stack), 16 kHz resampling, level bands and FLAC.
+cpal = "0.15"
+rubato = "0.16"
+realfft = "3.5"
+flacenc = "0.5"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

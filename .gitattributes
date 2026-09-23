@@ -1,0 +1,9 @@
+# Normalise line endings in the repo so a clone on Linux/macOS does not show
+# every file as modified. Checkouts still get the platform's native endings.
+* text=auto
+
+# Binary assets git must never touch.
+*.png binary
+*.ico binary
+*.icns binary
+*.wav binary

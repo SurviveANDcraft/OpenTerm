@@ -1,0 +1,825 @@
+/* ================= Git Map panel =================
+   Two panes inside one modal: a hierarchical ref/worktree explorer on the
+   left, and a lane-rail commit graph on the right. Row geometry is fixed
+   (--gm-row-h) so the SVG rail and the HTML rows stay aligned; zooming scales
+   the whole rows block at once so alignment survives it. */
+
+.gitmap {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 105;
+  background: color-mix(in srgb, var(--bg-pane) 72%, transparent);
+  backdrop-filter: blur(3px);
+  place-items: center;
+  --gm-row-h: 46px;
+  --gm-rail-w: 60px;
+  --gm-zoom: 1;
+}
+
+.gitmap.visible {
+  display: grid;
+}
+
+.gitmap-card {
+  width: min(1400px, calc(100vw - 40px));
+  height: calc(100vh - 48px);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: gitmap-modal-in 220ms var(--ease-out);
+}
+
+@keyframes gitmap-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+/* ---- header ---- */
+
+.gitmap-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--elev-1);
+}
+
+.gitmap-heading {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.gitmap-heading h2 {
+  font-size: 14.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gitmap-subtitle {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
+}
+
+.gitmap-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.gm-stat {
+  white-space: nowrap;
+}
+.gm-stat b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.gm-stat-ok {
+  color: var(--success);
+}
+.gm-stat-warn {
+  color: var(--danger);
+}
+.gm-stat-track {
+  color: var(--info);
+  font-variant-numeric: tabular-nums;
+}
+
+.gm-spark {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 20px;
+  margin-left: auto;
+  padding-left: 10px;
+}
+.gm-spark i {
+  width: 4px;
+  border-radius: 1px;
+  background: var(--accent);
+  display: block;
+}
+
+.gitmap-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.gitmap-search {
+  width: 190px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+}
+.gitmap-search:focus {
+  border-color: var(--accent);
+}
+
+.gitmap-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+/* ---- body layout ---- */
+
+.gitmap-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 286px 1fr;
+  background: var(--bg-pane);
+}
+
+/* ---- loading skeleton ---- */
+
+/* The skeleton sits over the real grid and mirrors it, so the panel keeps its
+   shape while git is being read and the commits fade in where the placeholder
+   rows already are. */
+.gitmap-skel {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: none;
+  grid-template-columns: 286px 1fr;
+  background: var(--bg-pane);
+}
+
+.gitmap-main.loading .gitmap-skel {
+  display: grid;
+}
+
+.gm-skel-tree {
+  border-right: 1px solid var(--border);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gm-skel-graph {
+  position: relative;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.gm-skel-file,
+.gm-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  /* Rows ease in one after another, which reads as the list being drawn. */
+  animation: gm-skel-in 0.4s ease-out backwards;
+  animation-delay: calc(var(--i) * 45ms);
+}
+
+.gm-skel-row {
+  padding-left: 6px;
+}
+
+.gm-skel-dot,
+.gm-skel-node {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.gm-skel-node {
+  width: 11px;
+  height: 11px;
+  z-index: 1;
+}
+
+.gm-skel-line {
+  height: 9px;
+}
+
+.gm-skel-meta {
+  margin-left: auto;
+  width: 54px;
+  height: 8px;
+  flex: none;
+}
+
+/* The vertical rail the commit nodes sit on, matching the real graph. */
+.gm-skel-rail {
+  position: absolute;
+  left: 31px;
+  top: 20px;
+  bottom: 46px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--hairline), transparent);
+}
+
+.gm-skel-status {
+  margin-top: auto;
+  align-self: flex-start;
+}
+
+@keyframes gm-skel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gm-skel-file,
+  .gm-skel-row {
+    animation: none;
+  }
+}
+
+/* ---- explorer ---- */
+
+.gitmap-tree {
+  overflow: auto;
+  border-right: 1px solid var(--hairline);
+  background: var(--elev-1);
+  padding: 6px 0 16px;
+  user-select: none;
+}
+
+.gitmap-tree.hidden,
+.gitmap-graph.hidden {
+  display: none;
+}
+
+.gm-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding-right: 10px;
+  padding-left: calc(8px + var(--gm-depth) * 13px);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.gm-row:hover {
+  background: var(--elev-2);
+}
+.gm-row.selected {
+  background: var(--accent-dim);
+  color: var(--accent-text);
+}
+
+.gm-row-section {
+  height: 28px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.gm-rowbar {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  border-radius: 0 3px 3px 0;
+  pointer-events: none;
+}
+
+.gm-twisty {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  transition: transform 120ms var(--ease-out);
+}
+.gm-twisty.open {
+  transform: rotate(90deg);
+}
+.gm-chev {
+  width: 12px;
+  height: 12px;
+}
+.gm-chev path {
+  stroke-width: 1.5;
+}
+
+.gm-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+.gm-row-section > .gm-dot {
+  display: none;
+}
+.gm-row-group > .gm-dot {
+  border-radius: 2px;
+  background: transparent;
+  border: 1px solid var(--text-faint);
+}
+.gm-dot-branch {
+  background: #6ea8d8;
+}
+.gm-dot-remote {
+  background: #8b8f98;
+}
+.gm-dot-tag {
+  background: #e8b45a;
+  border-radius: 50%;
+}
+.gm-dot-stash {
+  background: #c78fd6;
+}
+.gm-dot-contrib {
+  background: var(--accent);
+  border-radius: 50%;
+}
+.gm-dot-file {
+  background: var(--text-faint);
+  border-radius: 50%;
+}
+
+.gm-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gm-row-branch .gm-label,
+.gm-row-tag .gm-label,
+.gm-row-file .gm-label {
+  color: var(--text);
+}
+
+.gm-meta {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.gm-meta-ok {
+  color: var(--success);
+}
+.gm-meta-warn {
+  color: var(--warning, #e8b45a);
+}
+.gm-meta-track {
+  color: var(--info);
+}
+
+/* ---- graph pane ---- */
+
+.gitmap-graph {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gitmap-graph-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--elev-1);
+}
+
+.gitmap-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+}
+
+.gm-scope-label {
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.gm-scope-count {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  padding-left: 8px;
+}
+
+.gm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 6px 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--info) 20%, transparent);
+  color: var(--info);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.gm-pill-tag {
+  background: color-mix(in srgb, var(--syn-const) 20%, transparent);
+  color: var(--syn-const);
+}
+.gm-pill-remote {
+  background: color-mix(in srgb, var(--text-dim) 20%, transparent);
+  color: var(--text-dim);
+}
+.gm-pill-contrib {
+  background: var(--accent-dim);
+  color: var(--accent-text);
+}
+.gm-pill-x {
+  opacity: 0.6;
+  font-size: 13px;
+  line-height: 1;
+}
+.gm-pill:hover .gm-pill-x {
+  opacity: 1;
+}
+
+.gitmap-graph-tools {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.gitmap-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--bg-pane);
+}
+
+.gitmap-rows {
+  position: relative;
+  zoom: var(--gm-zoom);
+  min-height: 100%;
+  padding-left: var(--gm-rail-w);
+}
+
+.gitmap-rail {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.gm-node-dot {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--bg-pane) 80%, transparent));
+}
+.gm-node-head {
+  stroke: var(--accent);
+  fill: var(--accent);
+}
+
+.gitmap-rowlist {
+  position: relative;
+}
+
+.gm-crow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--gm-row-h);
+  padding: 0 14px 0 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+  cursor: pointer;
+}
+.gm-crow:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.gm-crow.selected {
+  background: var(--accent-dim);
+}
+
+.gm-sha {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent-text);
+  background: var(--accent-dim);
+  border-radius: 4px;
+  padding: 2px 5px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.gm-sha:hover {
+  filter: brightness(1.15);
+}
+.gm-sha.copied {
+  background: color-mix(in srgb, var(--success) 30%, transparent);
+  color: var(--success);
+}
+
+.gm-subject {
+  flex: 1 1 auto;
+  min-width: 60px;
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-chips {
+  display: flex;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gm-chip {
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+.gm-chip-head {
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.gm-chip-branch {
+  background: color-mix(in srgb, var(--info) 22%, transparent);
+  color: var(--info);
+}
+.gm-chip-remote {
+  background: color-mix(in srgb, var(--text-dim) 22%, transparent);
+  color: var(--text-dim);
+}
+.gm-chip-tag {
+  background: color-mix(in srgb, var(--syn-const) 22%, transparent);
+  color: var(--syn-const);
+}
+
+.gm-churn {
+  flex: 0 0 84px;
+  display: flex;
+  justify-content: flex-end;
+}
+.gm-churn-bar {
+  height: 6px;
+  min-width: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--danger);
+  display: block;
+}
+.gm-churn-bar i {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+.gm-churn-none {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.gm-author {
+  flex: 0 0 110px;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.gm-date {
+  flex: 0 0 34px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.gm-more,
+.gm-noresults {
+  padding: 14px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* ---- commit detail drawer ---- */
+
+.gitmap-detail {
+  border-top: 1px solid var(--hairline);
+  background: var(--elev-1);
+  padding: 10px 14px 12px;
+  animation: gitmap-detail-in 160ms var(--ease-out);
+}
+.gitmap-detail.hidden {
+  display: none;
+}
+
+@keyframes gitmap-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.gm-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.gm-detail-subject {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-detail-close {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.gm-detail-close:hover {
+  color: var(--text);
+}
+
+.gm-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 4px 20px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.gm-detail-k {
+  display: inline-block;
+  min-width: 62px;
+  color: var(--text-faint);
+}
+
+.gm-detail-dim {
+  color: var(--text-faint);
+}
+
+.gm-detail-refs {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.gm-add {
+  color: var(--success);
+}
+.gm-del {
+  color: var(--danger);
+}
+
+.gm-parent {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent-text);
+  background: var(--accent-dim);
+  border: none;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-right: 4px;
+  cursor: pointer;
+}
+.gm-parent:hover {
+  filter: brightness(1.15);
+}
+
+/* ---- empty / legend ---- */
+
+.gitmap-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 24px;
+  color: var(--text-dim);
+  font-size: 13px;
+  background: var(--bg-pane);
+  z-index: 2;
+}
+
+.gitmap-empty.hidden {
+  display: none;
+}
+
+.gitmap-dim {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.gitmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 7px 16px;
+  border-top: 1px solid var(--hairline);
+  background: var(--elev-1);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.gitmap-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gm-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.gm-sw-head {
+  background: var(--accent);
+}
+.gm-sw-branch {
+  background: #6ea8d8;
+}
+.gm-sw-remote {
+  background: #8b8f98;
+}
+.gm-sw-tag {
+  background: #e8b45a;
+}
+
+.gitmap-legend-hint {
+  margin-left: auto;
+  color: var(--text-faint);
+}

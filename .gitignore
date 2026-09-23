@@ -1,0 +1,40 @@
+# dependencies & build output
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/target-fixed/
+src-tauri/gen/
+*.tsbuildinfo
+
+# secrets & signing material
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+# written by scripts/make-latest-json.mjs into the bundle dir
+latest.json
+
+# editors & OS
+.vscode/
+.idea/
+.vs/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# local tooling & agent state
+.claude/
+.agents/
+*.log
+*.stackdump
+
+# private planning docs — not part of the public repo.
+# Both cases listed: the folder on disk is lowercase and only matches `Plans/`
+# because Windows checkouts set core.ignorecase, which a Linux/macOS clone or CI
+# runner does not.
+Plans/
+plans/

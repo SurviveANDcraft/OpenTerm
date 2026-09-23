@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenTerm",
+  "version": "1.0.0",
+  "identifier": "com.openterm.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenTerm",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 760,
+        "minHeight": 480,
+        "dragDropEnabled": true,
+        "decorations": false,
+        "backgroundColor": "#0b0d10"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; frame-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420; object-src 'none'; base-uri 'self'; form-action 'none'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": [
+            "**"
+          ],
+          "requireLiteralLeadingDot": false
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "publisher": "OpenTerm"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/SurviveANDcraft/OpenTerm/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4NDk3RDQyRUE4RUQxRUEKUldUcTBZN3FRbjFKS0FsRjUzVDdLZStWa3VJZFBkemp6UW5QM0FNbFFzSVdqcGRXVUY0eHNRbHYK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
