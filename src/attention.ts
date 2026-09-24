@@ -125,6 +125,216 @@ const ERROR_PATTERNS: RegExp[] = [
   /^fatal:/im,
 ];
 
+/** ---- Rendered-screen prompt detection -----------------------------------
+ *
+ *  Everything above reads the raw PTY byte stream, which works for Claude Code
+ *  and plain shells because they print their prompts as ordinary lines. Codex
+ *  (ratatui), Gemini CLI and opencode don't: they paint their approval panels
+ *  with absolute cursor jumps, so once stripAnsi() drops the escapes the panel
+ *  decodes to one long run of glued-together words with no line structure —
+ *  and Codex's selection cursor is `›`, not `❯`, so even the glued text never
+ *  matched. Those prompts are read off the *rendered* screen instead (the same
+ *  xterm buffer the user is looking at), once output has settled.
+ *
+ *  Every rule here needs structure, never a phrase alone: an agent narrating
+ *  "would you like to run this command?" in its reply is prose, and must not
+ *  chime. Sourced from the shipped binaries (Codex 0.155, opencode, Gemini
+ *  CLI), not guessed. */
+
+/** Rows of the rendered screen inspected. A Codex approval for a long, wrapped
+ *  command is a tall panel; its question line sits well above the footer. */
+const SCREEN_PROMPT_LINES = 32;
+
+/** Selection-cursor glyphs: Codex / opencode `›`, Claude Code / inquirer `❯`,
+ *  Gemini's radio `●`, questionary `»`, plus the triangles some TUIs use.
+ *  A bare `>` is deliberately absent — markdown quotes and shell prompts. */
+const CURSOR_GLYPHS = "›❯▸▶►»●";
+
+/** The option the cursor sits on: "› 1. Yes, proceed (y)". */
+const SELECTED_OPTION = new RegExp(String.raw`^[\s│┃|]*[${CURSOR_GLYPHS}]\s*\d{1,2}[.)]\s+\S`, "u");
+/** Any option row, cursor or not: "  2. Yes, and don't ask again …". */
+const NUMBERED_OPTION = new RegExp(String.raw`^[\s│┃|]*(?:[${CURSOR_GLYPHS}○◯]\s*)?\d{1,2}[.)]\s+(\S.*)$`, "u");
+
+/** The interaction hint a blocking panel paints under itself:
+ *    Codex   "Press enter to confirm or esc to cancel"
+ *    Claude  "Enter to select · ↑/↓ to navigate · Esc to cancel"
+ *  "esc to interrupt" is intentionally not here — that's the *working* footer. */
+const PROMPT_FOOTER =
+  /\benter\b[^\n]{0,24}?\bto (?:confirm|submit|select|continue|send|approve|accept|proceed)\b|\besc(?:ape)?\b[^\n]{0,24}?\bto (?:cancel|go back|deny|decline|reject|dismiss)\b/i;
+
+/** Option labels only ever painted by a harness's own approval / question
+ *  panels — matched against the text of numbered option rows, never prose. */
+const APPROVAL_OPTION_LABEL = new RegExp(
+  [
+    // Codex
+    String.raw`^Yes, proceed\b`,
+    String.raw`^Yes, just this once\b`,
+    String.raw`^Yes, and (?:don't|do not) ask again\b`,
+    String.raw`^Yes, and allow (?:this host|these permissions)\b`,
+    String.raw`^Yes, implement this plan\b`,
+    String.raw`^Yes, provide the requested info\b`,
+    String.raw`^Yes, continue(?: anyway)?\b`,
+    String.raw`^No, and tell \S+ what to do differently\b`,
+    String.raw`^No, continue without running it\b`,
+    String.raw`^No, and block this host\b`,
+    String.raw`^No, but continue without it\b`,
+    String.raw`^No, stay in Plan mode\b`,
+    String.raw`^Run the tool\b`,
+    // Gemini CLI
+    String.raw`^Allow once\b`,
+    String.raw`^Allow for this session\b`,
+    String.raw`^Allow always\b`,
+    String.raw`^Always allow\b`,
+    String.raw`^No, suggest changes\b`,
+    String.raw`^Modify with external editor\b`,
+    // Claude Code / opencode
+    String.raw`^Yes, allow\b`,
+    String.raw`^Yes, and don't ask again\b`,
+    String.raw`^No, and tell Claude\b`,
+    String.raw`^Type your own answer\b`,
+    String.raw`^Type something\.?$`,
+    String.raw`^Chat about this\b`,
+  ].join("|"),
+  "i",
+);
+
+/** Footer hints that on their own prove a question panel is up — Codex's
+ *  request_user_input tool ("enter to submit answer", "… to submit all",
+ *  "N unanswered questions") and its MCP elicitation form ("… to navigate
+ *  fields"). Only trusted in the last few rows. */
+const QUESTION_FOOTER = /\bto submit (?:answer|all)\b|\bunanswered questions?\b|\bto navigate fields\b/i;
+
+/** opencode's permission panel: "△ Permission required", then buttons
+ *  "Allow once · Allow always · Reject" (not numbered). */
+const OPENCODE_PERMISSION_HEADER = /^[\s△▲⚠!│┃]*Permission required\s*$/i;
+const OPENCODE_PERMISSION_BUTTONS = /\bAllow once\b[\s\S]{0,60}\b(?:Allow always|Always allow|Reject)\b/i;
+
+/** Gemini's inline confirmation questions, which its radio list sits under. */
+const GEMINI_CONFIRM_QUESTION = /^\s*(?:Allow execution of\b[^\n]*\?|Apply this change\?|Do you want to proceed\?)\s*$/im;
+
+/** Final-failure lines as the harness paints them on screen.
+ *
+ *    Codex   "■ stream disconnected before completion: …", "■ unexpected
+ *            status 401 …", "■ You've hit your usage limit …", "■ Quota
+ *            exceeded …", "■ Selected model is at capacity …"
+ *    Gemini  "✕ [API Error: …]"
+ *
+ *  Codex prints *every* error event with that `■` glyph, so the glyph is the
+ *  signal — minus the one it also uses when the user pressed Esc themselves
+ *  ("Conversation interrupted - tell the model what to do differently"),
+ *  which is the user's own doing, not something to alert them about. */
+const SCREEN_ERROR_PATTERNS: RegExp[] = [
+  /^\s*■\s+(?![^\n]*\binterrupted\b)\S/,
+  /^\s*✕\s*\[API Error:/,
+];
+/** Errors only count near the bottom of the screen — above that they're
+ *  scrollback the user has already moved past. */
+const SCREEN_ERROR_LINES = 10;
+
+export interface ScreenAttention {
+  kind: "prompt" | "error";
+  /** Stable identity of what's showing, used to dedup the chime. Built from
+   *  the question and option labels only, so moving the cursor between
+   *  options (which repaints the panel) doesn't count as a new prompt. */
+  sig: string;
+  /** Human-ish text for the inbox. */
+  message: string;
+}
+
+const stripCursor = (l: string): string =>
+  l.replace(new RegExp(String.raw`^[\s│┃|]*[${CURSOR_GLYPHS}○◯]?\s*`, "u"), "").trim();
+
+/** Reads a blocking prompt or a final error off a rendered screen, or null.
+ *  Pure — exported because it's the piece worth testing directly. */
+export function readScreenAttention(screen: string): ScreenAttention | null {
+  const lines = screen.split("\n");
+  while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+  const win = lines.slice(-SCREEN_PROMPT_LINES);
+  const nonEmpty = win.filter((l) => l.trim());
+  const footer = nonEmpty.slice(-3).join("\n");
+  const text = win.join("\n");
+
+  // Pickers the user opened themselves — nothing to alert them to.
+  const vetoed = MODEL_SELECTOR_HEADER.test(text) || UPDATE_BANNER_HEADER.test(text);
+
+  if (!vetoed) {
+    // (1) A numbered selection menu with a live cursor.
+    const optionIdx: number[] = [];
+    win.forEach((l, i) => {
+      if (NUMBERED_OPTION.test(l)) optionIdx.push(i);
+    });
+    const hasCursor = win.some((l) => SELECTED_OPTION.test(l));
+    if (hasCursor && optionIdx.length >= 2) {
+      const first = optionIdx[0];
+      const labels = optionIdx.map((i) => stripCursor(win[i]).replace(/^\d{1,2}[.)]\s+/, ""));
+      const knownLabel = labels.some((l) => APPROVAL_OPTION_LABEL.test(l));
+      // The question: the topmost "?"-terminated line of the panel above the
+      // first option — the header ("Would you like to run the following
+      // command?") rather than a "Reason: …?" line under it. The scan stops at
+      // a transcript item (Codex "•", a user turn "›") or a box's top edge, so
+      // it never reaches up into the conversation.
+      let q = -1;
+      for (let i = first - 1; i >= Math.max(0, first - 16); i--) {
+        const l = win[i].replace(/[\s│┃|]+$/u, "");
+        if (/^\s*(?:[•›■✔]\s|╭)/u.test(l)) break;
+        if (QUESTION_LINE.test(l) && !/\?\s*for shortcuts/i.test(l)) q = i;
+      }
+      const hasFooter = PROMPT_FOOTER.test(footer) || QUESTION_FOOTER.test(footer);
+      // The options must be the live bottom of the screen, not a list that
+      // scrolled up: at most a footer's worth of rows below the last one.
+      const tailRows = win.slice(optionIdx[optionIdx.length - 1] + 1).filter((l) => l.trim()).length;
+      const atBottom = tailRows <= 6;
+      if (atBottom && (hasFooter || knownLabel) && (q >= 0 || knownLabel || QUESTION_FOOTER.test(footer))) {
+        const question = q >= 0 ? win[q].trim() : "";
+        const top = q >= 0 ? q : Math.max(0, first - 3);
+        const block = win
+          .slice(top)
+          .map((l) => stripCursor(l))
+          .filter(Boolean);
+        return {
+          kind: "prompt",
+          sig: [question, ...labels].join(" | ").replace(/\s+/g, " "),
+          message: block.join("\n"),
+        };
+      }
+    }
+
+    // (2) A free-text question panel (Codex request_user_input with no
+    //     choices, MCP elicitation form) — proven by its footer alone.
+    if (QUESTION_FOOTER.test(footer)) {
+      const block = nonEmpty.slice(-10).map((l) => l.trim());
+      return { kind: "prompt", sig: block.join(" ").replace(/\s+/g, " "), message: block.join("\n") };
+    }
+
+    // (3) opencode's permission panel.
+    const permIdx = win.findIndex((l) => OPENCODE_PERMISSION_HEADER.test(l));
+    if (permIdx >= 0 && OPENCODE_PERMISSION_BUTTONS.test(win.slice(permIdx).join("\n"))) {
+      const block = win.slice(permIdx).map((l) => l.trim()).filter(Boolean);
+      return { kind: "prompt", sig: block.join(" ").replace(/\s+/g, " "), message: block.join("\n") };
+    }
+
+    // (4) Gemini confirmation whose radio list rendered without numbers.
+    const gq = GEMINI_CONFIRM_QUESTION.exec(text);
+    if (gq && /\b(?:Allow once|Allow for this session|No, suggest changes)\b/i.test(text.slice(gq.index))) {
+      const block = text.slice(gq.index).split("\n").map(stripCursor).filter(Boolean);
+      return { kind: "prompt", sig: block.join(" ").replace(/\s+/g, " "), message: block.join("\n") };
+    }
+  }
+
+  // (5) A final error near the bottom — unless the harness is still working
+  //     (it's retrying, or has moved on to the next thing).
+  const bottom = nonEmpty.slice(-SCREEN_ERROR_LINES);
+  if (!bottom.some(isWorkingLine)) {
+    for (let i = bottom.length - 1; i >= 0; i--) {
+      if (SCREEN_ERROR_PATTERNS.some((re) => re.test(bottom[i]))) {
+        const line = bottom[i].trim();
+        return { kind: "error", sig: line, message: line };
+      }
+    }
+  }
+  return null;
+}
+
 /** Every word the harnesses in the new-pane menu paint next to their spinner
  *  while a turn is in flight — the thing a person reads as "it's thinking".
  *
@@ -452,6 +662,17 @@ const NOT_WORKING_LINE_PATTERNS: RegExp[] = [
  *  a byte-stream tail used to need to avoid flickering out mid-turn. */
 const WORKING_IDLE_MS = 1200;
 
+/** How long a mid-turn footer stays believed after it was last seen to change.
+ *
+ *  Same rule the sub-agent claims live by, for the same reason: text alone
+ *  proves nothing. A working harness animates its footer — the spinner glyph
+ *  cycles several times a second, the elapsed counter ticks every second, the
+ *  token tally grows. A line that merely *reads* like a footer but sits still
+ *  (a stale row left behind by a repaint, prose that happens to fit a pattern,
+ *  a finished turn's leftovers in another pane) is not work, and must not keep
+ *  the dot green. Covers one missed tick of the slowest mover — the 1s clock. */
+const WORKING_LIVE_MS = 2200;
+
 /** How often the live screen of an active pane is inspected. Fast enough that
  *  the dot lights within a frame or two of a turn starting, cheap enough to run
  *  across every pane (it reads a dozen-odd rows out of xterm's own buffer). */
@@ -485,6 +706,11 @@ const listeners = new Set<AttentionListener>();
  *  seen painting an interrupt hint. */
 const working = new Map<string, boolean>();
 const workingSeenAt = new Map<string, number>();
+/** Per pane, the footer text last matched and when it last changed — see
+ *  WORKING_LIVE_MS. Kept across frames with no match, so a blink in the redraw
+ *  doesn't read as movement when the same text comes back. */
+const workingSig = new Map<string, string>();
+const workingMovedAt = new Map<string, number>();
 /** Panes whose harness currently has sub-agents in flight -> how many. */
 const subagents = new Map<string, number>();
 /** Per pane, every sub-agent claim recently on screen: its last text, when that
@@ -518,6 +744,14 @@ const settleTimers = new Map<string, number>();
  *  of the *same* prompt (PTY resize on session switch, window refocus, buffer
  *  repaint) updates the dot silently instead of chiming again. */
 const chimedSig = new Map<string, string>();
+/** Panes whose flag was raised by the rendered-screen check rather than the
+ *  byte stream — only that check may take it back down. */
+const screenFlagged = new Set<string>();
+/** Per pane, the screen-detected prompt/error the user has already responded
+ *  to (typed into the pane while it showed). A rendered screen keeps showing
+ *  an error line, or a prompt mid-redraw, after the user acted on it; this
+ *  stops that same thing from chiming again on the next settle. */
+const screenAcked = new Map<string, string>();
 
 const TAIL_WINDOW = 3000; // chars of recent (decoded, ANSI-stripped) output kept per pane
 const PROMPT_LINES = 6; // only the last few non-empty lines are inspected for a live prompt
@@ -597,10 +831,22 @@ export function feedPaneOutput(id: string, bytes: Uint8Array): void {
   const errorLine = isPrompt ? null : findErrorLine(plain);
 
   if (!isPrompt && !errorLine) {
-    // Output moved on past any earlier prompt/error — clear the flag and forget
-    // what we chimed for, so a genuinely new (even identical) one can chime.
-    setAttention(id, false);
-    chimedSig.delete(id);
+    // Nothing prompt-shaped in the byte stream. A TUI that paints with cursor
+    // jumps (Codex, Gemini, opencode) may still be showing one, which only the
+    // rendered screen can tell — so check that once output settles. Until then,
+    // a flag the screen raised stays up: its panel repaints (cursor moves, a
+    // ticking clock) must not blink the dot off and on.
+    if (!screenFlagged.has(id)) {
+      setAttention(id, false);
+      chimedSig.delete(id);
+    }
+    settleTimers.set(
+      id,
+      window.setTimeout(() => {
+        settleTimers.delete(id);
+        settleFromScreen(id);
+      }, SETTLE_MS),
+    );
     return;
   }
 
@@ -612,27 +858,54 @@ export function feedPaneOutput(id: string, bytes: Uint8Array): void {
     id,
     window.setTimeout(() => {
       settleTimers.delete(id);
-      // Blocked on a question, or dead: either way it is not mid-turn any more.
-      setWorking(id, false);
-      setAttention(id, true, isPrompt ? "prompt" : "error");
-      if (chimedSig.get(id) !== sig) {
-        chimedSig.set(id, sig);
-        playChime();
-        if (store.state.settings.taskbarFlash) void invoke("flash_taskbar_icon");
-        const session = store.state.sessions.find((s) => collectLeaves(s.tree).includes(id));
-        addInboxItem({
-          kind: isPrompt ? "approval" : "error",
-          message: sig,
-          // Straight off the PTY — box-drawing, prompt glyphs and all. The AI
-          // namer turns this into something readable.
-          raw: true,
-          sessionId: session?.id,
-          sessionName: session?.name,
-          paneId: id,
-        });
-      }
+      screenFlagged.delete(id);
+      raise(id, isPrompt ? "prompt" : "error", sig, sig);
     }, SETTLE_MS),
   );
+}
+
+/** Flags a pane and — the first time this particular prompt/error is seen —
+ *  chimes, flashes the taskbar and files an inbox item. */
+function raise(id: string, kind: "prompt" | "error", sig: string, message: string): void {
+  // Blocked on a question, or dead: either way it is not mid-turn any more.
+  setWorking(id, false);
+  setAttention(id, true, kind);
+  if (chimedSig.get(id) === sig) return;
+  chimedSig.set(id, sig);
+  playChime();
+  if (store.state.settings.taskbarFlash) void invoke("flash_taskbar_icon");
+  const session = store.state.sessions.find((s) => collectLeaves(s.tree).includes(id));
+  addInboxItem({
+    kind: kind === "prompt" ? "approval" : "error",
+    message,
+    // Straight off the terminal — box-drawing, prompt glyphs and all. The AI
+    // namer turns this into something readable.
+    raw: true,
+    sessionId: session?.id,
+    sessionName: session?.name,
+    paneId: id,
+  });
+}
+
+/** The settled-output check against the rendered screen (see
+ *  readScreenAttention). Raises the flag for a panel the byte stream couldn't
+ *  see, and takes it back down once that panel is gone. */
+function settleFromScreen(id: string): void {
+  const screen = readScreen(id, SCREEN_PROMPT_LINES);
+  const hit = screen ? readScreenAttention(screen) : null;
+  const acked = screenAcked.get(id);
+  if (hit && hit.sig !== acked) {
+    screenFlagged.add(id);
+    raise(id, hit.kind, hit.sig, hit.message);
+    return;
+  }
+  // What the user already responded to is gone from the screen: forget it, so
+  // the same prompt coming back later counts as new.
+  if (!hit) screenAcked.delete(id);
+  if (screenFlagged.delete(id)) {
+    setAttention(id, false);
+    chimedSig.delete(id);
+  }
 }
 
 /** The last few non-empty lines of `plain`, joined back with newlines. A live
@@ -662,6 +935,10 @@ function findErrorLine(plain: string): string | null {
  *  flag immediately and reset dedup state (the next prompt, even an identical
  *  one, should chime again). */
 export function clearPaneAttention(id: string): void {
+  if (screenFlagged.delete(id)) {
+    const sig = chimedSig.get(id);
+    if (sig) screenAcked.set(id, sig);
+  }
   tails.delete(id);
   chimedSig.delete(id);
   const pending = settleTimers.get(id);
@@ -679,12 +956,16 @@ export function forgetPane(id: string): void {
   attentionKind.delete(id);
   working.delete(id);
   workingSeenAt.delete(id);
+  workingSig.delete(id);
+  workingMovedAt.delete(id);
   subagents.delete(id);
   subagentClaims.delete(id);
   lastOutputAt.delete(id);
   decoders.delete(id);
   tails.delete(id);
   chimedSig.delete(id);
+  screenFlagged.delete(id);
+  screenAcked.delete(id);
   const pending = settleTimers.get(id);
   if (pending !== undefined) {
     clearTimeout(pending);
@@ -768,7 +1049,7 @@ function pollWorking(): void {
 
     // Blocked on a question, or sitting on a failure, is the opposite of
     // working — and outranks whatever is still painted on screen.
-    if (!needsAttention.get(id) && lines.some(isWorkingLine)) {
+    if (!needsAttention.get(id) && footerIsLive(id, lines.filter(isWorkingLine).join("\n"), now)) {
       setWorking(id, true);
     } else if (flagged && now - (workingSeenAt.get(id) ?? 0) >= WORKING_IDLE_MS) {
       setWorking(id, false);
@@ -779,6 +1060,20 @@ function pollWorking(): void {
     // at a prompt waiting for you.
     setSubagents(id, liveSubagentCount(id, readSubagentClaims(tallLines), now));
   }
+}
+
+/** True when `sig` (every mid-turn footer line on screen right now) is both
+ *  present and has been caught changing within WORKING_LIVE_MS.
+ *
+ *  A first sighting is only recorded, never believed: the dot lights on the
+ *  next tick of the spinner (a fraction of a second into a real turn), while a
+ *  static look-alike never lights it at all. */
+function footerIsLive(id: string, sig: string, now: number): boolean {
+  if (!sig) return false;
+  const prev = workingSig.get(id);
+  workingSig.set(id, sig);
+  if (prev !== undefined && prev !== sig) workingMovedAt.set(id, now);
+  return now - (workingMovedAt.get(id) ?? 0) < WORKING_LIVE_MS;
 }
 
 /** Folds this poll's claims into the pane's tracked ones and returns how many
