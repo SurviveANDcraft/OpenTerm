@@ -193,6 +193,17 @@ fn seed_prices() -> HashMap<String, ModelPrice> {
     // "gpt-5" covers point releases and dated snapshots at the family rate —
     // an estimate for any model released after this table. Edit pricing.json
     // to correct a rate; hand-edited entries are never overwritten.
+    add("gpt-6-astra", 10.0, 50.0);
+    add("gpt-6-sol", 2.0, 10.0);
+    add("gpt-6-luna", 0.1, 0.5);
+    add("gpt-5.6-sol", 4.0, 20.0);
+    add("gpt-5.6-terra", 2.0, 12.0);
+    add("gpt-5.6-luna", 0.2, 1.2);
+    add("gpt-5.6-cyber", 12.5, 75.0);
+    add("gpt-5.5", 5.0, 30.0);
+    add("gpt-5.5-pro", 30.0, 180.0);
+    add("gpt-5.5-cyber", 12.5, 75.0);
+    add("gpt-5.3-codex", 1.75, 14.0);
     add("gpt-5", 1.25, 10.0);
     add("gpt-5-mini", 0.25, 2.0);
     add("gpt-5-nano", 0.05, 0.4);
@@ -1413,6 +1424,19 @@ fn codex_session_index() -> HashMap<String, (PathBuf, i64)> {
     map
 }
 
+/// (input, cached input, output, reasoning, total) out of one of Codex's
+/// cumulative token-usage objects.
+fn codex_totals(t: &Value) -> (u64, u64, u64, u64, u64) {
+    let g = |k: &str| t.get(k).and_then(Value::as_u64).unwrap_or(0);
+    (
+        g("input_tokens"),
+        g("cached_input_tokens"),
+        g("output_tokens"),
+        g("reasoning_output_tokens"),
+        g("total_tokens"),
+    )
+}
+
 /// Codex reports **cumulative** totals on every `token_count` event, so the
 /// final event is the session total — summing them would multiply the real
 /// figure by the number of turns.
@@ -1473,23 +1497,30 @@ fn parse_codex_session(
             "event_msg" => {
                 let pty = payload.and_then(|p| p.get("type")).and_then(Value::as_str);
                 if pty == Some("token_count") {
-                    if let Some(info) = payload.and_then(|p| p.get("info")) {
-                        if let Some(t) = info.get("total_token_usage") {
-                            let g = |k: &str| t.get(k).and_then(Value::as_u64).unwrap_or(0);
-                            last_totals = Some((
-                                g("input_tokens"),
-                                g("cached_input_tokens"),
-                                g("output_tokens"),
-                                g("reasoning_output_tokens"),
-                                g("total_tokens"),
-                            ));
-                        }
+                    if let Some(t) = payload
+                        .and_then(|p| p.get("info"))
+                        .and_then(|i| i.get("total_token_usage"))
+                    {
+                        last_totals = Some(codex_totals(t));
                     }
                 }
             }
+            // Newer Codex (0.153+) also writes a `token_usage_record` per model
+            // response, carrying the same cumulative thread total. A session can
+            // end up with only these — e.g. one whose single turn was cut short
+            // before the `token_count` event landed — so either one counts.
+            "token_usage_record" => {
+                if let Some(t) = payload.and_then(|p| p.get("thread_token_usage")) {
+                    last_totals = Some(codex_totals(t));
+                }
+            }
+            // Newer Codex routes tools through `custom_tool_call` (its `exec`
+            // wrapper) rather than `function_call`; both are tool calls.
             "response_item"
-                if payload.and_then(|p| p.get("type")).and_then(Value::as_str)
-                    == Some("function_call")
+                if matches!(
+                    payload.and_then(|p| p.get("type")).and_then(Value::as_str),
+                    Some("function_call" | "custom_tool_call")
+                )
                 => {
                     out.tool_calls += 1;
                     let name = payload
@@ -1995,6 +2026,17 @@ fn codex_resume_candidates() -> Vec<ResumeCandidate> {
             continue;
         };
         let payload = v.get("payload").unwrap_or(&v);
+        // Sub-agent threads (spawned agents, the approval auto-reviewer) get
+        // rollouts of their own, born inside the parent's window and in the
+        // same cwd — exactly what the picker favours. They aren't
+        // conversations the user can go back to, so they're never resumed.
+        if payload
+            .get("source")
+            .and_then(|s| s.get("subagent"))
+            .is_some()
+        {
+            continue;
+        }
         let created = payload
             .get("timestamp")
             .or_else(|| v.get("timestamp"))
@@ -2579,9 +2621,14 @@ mod tests {
             price_for(&t, "claude-haiku-4-5-20251001", None).unwrap().input,
             1.0
         );
-        // A point release inherits its family rate — an estimate, but a far
-        // better one than the $0 an unpriced model reports.
-        assert_eq!(price_for(&t, "gpt-5.5", None).unwrap().input, 1.25);
+        // Current Codex models carry their own list rates, not a family guess.
+        assert_eq!(price_for(&t, "gpt-5.5", None).unwrap().input, 5.0);
+        assert_eq!(price_for(&t, "gpt-5.6-sol", None).unwrap().input, 4.0);
+        assert_eq!(price_for(&t, "gpt-6-sol", None).unwrap().output, 10.0);
+        assert_eq!(price_for(&t, "gpt-6-astra", None).unwrap().input, 10.0);
+        // A point release still inherits its family rate — an estimate, but a
+        // far better one than the $0 an unpriced model reports.
+        assert_eq!(price_for(&t, "gpt-5.1", None).unwrap().input, 1.25);
         assert_eq!(price_for(&t, "gpt-5-mini-2026-01-01", None).unwrap().input, 0.25);
         // A model from no known family must stay unpriced rather than
         // silently matching something unrelated.
