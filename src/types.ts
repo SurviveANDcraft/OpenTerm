@@ -440,6 +440,7 @@ export const ACTIONS = {
   openSettings: "Open settings",
   openTasks: "Open tasks",
   openInbox: "Open inbox",
+  toggleAgents: "Toggle Agents panel",
   restoreLast: "Undo last close (session, pane or task)",
 } as const;
 
@@ -477,6 +478,7 @@ export const DEFAULT_KEYBINDS: Record<Action, string> = {
   openSettings: "Ctrl+,",
   openTasks: "Ctrl+Shift+K",
   openInbox: "Ctrl+Shift+I",
+  toggleAgents: "Ctrl+Shift+A",
   restoreLast: "Ctrl+Shift+U",
 };
 
@@ -575,6 +577,13 @@ export interface Settings {
    *  readable name and one-line description. Needs `openrouterApiKey`; with no
    *  key set the raw text is shown as-is regardless of this setting. */
   aiInboxSummaries: boolean;
+  /** Right-hand Agents panel: every agent as a card, plus an assistant that
+   *  reads terminals on request. */
+  agentsPanelVisible: boolean;
+  agentsPanelWidth: number;
+  /** Have an AI name each agent card's task and current state. Only runs while
+   *  the panel is open and a key is set. */
+  agentCardSummaries: boolean;
   /** Flash the taskbar icon when a pane needs attention (approval prompt or
    *  error), in addition to the sound and inbox item. */
   taskbarFlash: boolean;
@@ -592,6 +601,8 @@ export interface Settings {
 
 export const SIDEBAR_WIDTH_MIN = 180;
 export const SIDEBAR_WIDTH_MAX = 420;
+export const AGENTS_PANEL_WIDTH_MIN = 280;
+export const AGENTS_PANEL_WIDTH_MAX = 600;
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "openterm",
@@ -615,6 +626,11 @@ export const DEFAULT_SETTINGS: Settings = {
   // paths and command output) to OpenRouter, so it needs an explicit opt-in
   // rather than riding along with the API key being set for delegation.
   aiInboxSummaries: false,
+  agentsPanelVisible: false,
+  agentsPanelWidth: 344,
+  // Unlike inbox naming this rides along with opening the panel: the cards
+  // are the feature the user just opened, and nothing is sent while it's shut.
+  agentCardSummaries: true,
   taskbarFlash: true,
   inboxNotifications: {},
   keybinds: { ...DEFAULT_KEYBINDS },

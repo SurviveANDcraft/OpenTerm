@@ -31,6 +31,7 @@
     "@codemirror/legacy-modes": "^6.5.3",
     "@lezer/highlight": "^1.2.3",
     "@milkdown/kit": "^7.22.1",
+    "@phosphor-icons/core": "^2.1.1",
     "@tauri-apps/api": "^2.4.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",

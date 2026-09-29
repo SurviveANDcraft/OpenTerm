@@ -1,0 +1,1359 @@
+/* ================= Agents panel (right sidebar) =================
+   Lives in .app-body's flex row after .main, mirroring the left sidebar: it
+   takes real layout space, so the session area narrows instead of being
+   covered (native browser webviews would paint over an overlay).
+
+   Shape system, used everywhere in this file:
+     8px   rows, buttons, tabs, code        (--ap-r)
+     12px  containers: composer, grouped lists, drop card  (--ap-r-lg)
+     pill  tags: attachments, terminal refs, sub-agent counts
+   Icons are Phosphor (regular weight) at 11-15px, coloured via currentColor. */
+
+:root {
+  --agents-width: 344px;
+}
+
+.agents-panel {
+  --ap-pad: 14px;
+  --ap-r: 8px;
+  --ap-r-lg: 12px;
+  --ap-line: color-mix(in srgb, var(--text) 7%, transparent);
+  position: relative;
+  width: var(--agents-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Floats like a pane: same 10px gutter as the session area, same radius. */
+  margin: 10px 10px 10px 0;
+  margin-right: calc(-1 * var(--agents-width) - 12px);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: var(--pane-radius);
+  box-shadow: var(--shadow-1);
+  transition: margin-right 240ms var(--ease-out);
+  overflow: hidden;
+}
+
+.app.agents-open .agents-panel {
+  margin-right: 10px;
+}
+
+.agents-panel svg.ph,
+.ap-edge-drop svg.ph {
+  flex: none;
+  display: block;
+}
+
+body.resizing-agents,
+body.resizing-agents * {
+  cursor: col-resize !important;
+}
+
+body.resizing-agents .agents-panel {
+  transition: none;
+}
+
+.ap-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  z-index: 3;
+  cursor: col-resize;
+}
+
+.ap-resizer::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 1px;
+  background: transparent;
+  transition: background 120ms ease-out;
+}
+
+.ap-resizer:hover::after,
+body.resizing-agents .ap-resizer::after {
+  background: var(--accent);
+}
+
+/* ---- header ---- */
+
+.ap-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px;
+}
+
+.ap-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--ap-r);
+  color: var(--text-faint);
+}
+
+.ap-icon-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.ap-icon-btn:active {
+  transform: scale(0.94);
+}
+
+.ap-icon-btn[hidden] {
+  display: none;
+}
+
+/* ---- view switch (Agents | Chat) ---- */
+
+.ap-switch {
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: calc(var(--ap-r) + 3px);
+  background: var(--bg-app);
+  box-shadow: inset 0 0 0 1px var(--ap-line), inset 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* One thumb slides between the two halves instead of two backgrounds
+   swapping, so the switch reads as a single physical control. */
+.ap-switch-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: var(--ap-r);
+  background: var(--elev-3);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent);
+  transition: transform 260ms var(--ease-spring);
+}
+
+.agents-panel[data-view="chat"] .ap-switch-thumb {
+  transform: translateX(100%);
+}
+
+.ap-switch-btn {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  border-radius: var(--ap-r);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-faint);
+  transition: color var(--t-med);
+}
+
+.ap-switch-btn:hover {
+  color: var(--text-dim);
+}
+
+.ap-switch-btn.active {
+  color: var(--text);
+}
+
+.ap-switch-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 99px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #1a1407;
+  background: var(--status-wait);
+}
+
+.ap-switch-badge:empty {
+  display: none;
+}
+
+/* Each view owns its own actions. */
+.agents-panel[data-view="chat"] .ap-resummarize,
+.agents-panel[data-view="agents"] .ap-new-chat {
+  display: none;
+}
+
+/* ---- sub-bar: session dropdown + summary ---- */
+
+.ap-subbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 32px;
+  padding: 0 12px 0 3px;
+  margin-bottom: 6px;
+}
+
+.ap-sub-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ap-scope {
+  position: relative;
+  min-width: 0;
+}
+
+.ap-scope-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 8px 0 9px;
+  border-radius: var(--ap-r);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.ap-scope-btn:hover,
+.ap-scope-btn.open {
+  color: var(--text);
+}
+
+.ap-scope-btn:hover,
+.ap-scope-btn.open {
+  background: var(--elev-2);
+}
+
+.ap-scope-btn svg {
+  color: var(--text-faint);
+  transition: transform var(--t-med);
+}
+
+.ap-scope-btn.open svg {
+  transform: rotate(180deg);
+}
+
+.ap-scope-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-scope-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.ap-scope-dot[hidden] {
+  display: none;
+}
+
+.ap-scope-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  width: max(220px, 100%);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: var(--ap-r-lg);
+  background: var(--elev-2);
+  box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--ap-line);
+  transform-origin: top left;
+  animation: ap-menu-in 160ms var(--ease-out);
+}
+
+.ap-scope-menu[hidden] {
+  display: none;
+}
+
+@keyframes ap-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+.ap-scope-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: var(--ap-r);
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-align: left;
+}
+
+.ap-scope-item:hover {
+  color: var(--text);
+  background: var(--elev-3);
+}
+
+.ap-scope-item.selected {
+  color: var(--text);
+}
+
+.ap-scope-item i {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.ap-scope-item i.all {
+  background: conic-gradient(var(--status-run), var(--status-sub), var(--status-wait), var(--status-run));
+}
+
+.ap-scope-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-scope-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-scope-check {
+  flex: none;
+  width: 12px;
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.ap-scope-item.selected .ap-scope-check {
+  visibility: visible;
+}
+
+.ap-scope-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--ap-line);
+}
+
+.ap-summary {
+  flex: none;
+  padding-right: 4px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-summary b {
+  font-weight: 600;
+  color: var(--status-wait);
+}
+
+.agents-panel[data-view="chat"] .ap-summary {
+  display: none;
+}
+
+/* ---- views ---- */
+
+.ap-views {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ap-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: none;
+  flex-direction: column;
+}
+
+.agents-panel[data-view="agents"] .ap-agents-view,
+.agents-panel[data-view="chat"] .ap-chat {
+  display: flex;
+  animation: ap-view-in 200ms var(--ease-out);
+}
+
+@keyframes ap-view-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.ap-agents-view {
+  overflow-y: auto;
+}
+
+.ap-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 8px;
+}
+
+.ap-empty {
+  margin: 0;
+  padding: 16px 14px;
+  border-radius: var(--ap-r-lg);
+  background: var(--elev-1);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+
+.ap-row {
+  flex: none;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 11px;
+  padding: 12px 12px 10px;
+  border-radius: var(--ap-r-lg);
+  background: var(--elev-1);
+  box-shadow:
+    inset 0 0 0 1px var(--ap-line),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
+  cursor: pointer;
+  transition: background var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast);
+  animation: ap-in 240ms var(--ease-out);
+}
+
+.ap-row:hover {
+  background: var(--elev-2);
+  box-shadow:
+    inset 0 0 0 1px var(--hover-line),
+    0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.ap-row:active {
+  transform: scale(0.995);
+}
+
+/* Blocked agents are the one thing worth interrupting you for, so they get a
+   tinted surface rather than yet another icon. */
+.ap-row.s-waiting {
+  background: color-mix(in srgb, var(--status-wait) 7%, var(--elev-1));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-wait) 28%, transparent);
+}
+
+.ap-row.s-error {
+  background: color-mix(in srgb, var(--status-err) 7%, var(--elev-1));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--status-err) 28%, transparent);
+}
+
+.ap-row.s-waiting:hover {
+  background: color-mix(in srgb, var(--status-wait) 11%, var(--elev-1));
+}
+
+.ap-row.s-error:hover {
+  background: color-mix(in srgb, var(--status-err) 11%, var(--elev-1));
+}
+
+.ap-row.attached {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+@keyframes ap-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.ap-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+}
+
+.ap-row > .ap-mark {
+  margin-top: 1px;
+}
+
+.ap-mark svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ap-row-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ap-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 20px;
+}
+
+.ap-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.003em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-state.s-working {
+  color: var(--status-run);
+}
+
+.ap-state.s-working svg {
+  animation: ap-spin 0.9s linear infinite;
+}
+
+.ap-state.s-waiting {
+  color: var(--status-wait);
+}
+
+.ap-state.s-error {
+  color: var(--status-err);
+}
+
+.ap-state.s-idle {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.ap-sub {
+  padding: 0 5px;
+  border-radius: 99px;
+  font-size: 10px;
+  color: var(--status-sub);
+  background: color-mix(in srgb, var(--status-sub) 14%, transparent);
+}
+
+@keyframes ap-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ap-row-task {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+  opacity: 0.92;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ap-skeleton {
+  display: block;
+  width: 72%;
+  height: 9px;
+  margin: 5px 0 4px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--elev-2) 25%, var(--elev-3) 50%, var(--elev-2) 75%);
+  background-size: 200% 100%;
+  animation: ap-shimmer 1.4s linear infinite;
+}
+
+@keyframes ap-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.ap-row-now {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 30px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ap-line);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ap-row-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-row-session i {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ap-row-cost {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-ask {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--ap-r);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--elev-3);
+  opacity: 0;
+  transform: translateX(2px);
+  transition: opacity var(--t-fast), transform var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+
+.ap-row:hover .ap-ask,
+.ap-shell:hover .ap-ask,
+.ap-ask:focus-visible,
+.ap-ask.on {
+  opacity: 1;
+  transform: none;
+}
+
+.ap-ask:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, var(--bg-sidebar));
+}
+
+.ap-ask.on {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.ap-ask:active {
+  transform: scale(0.96);
+}
+
+/* ---- other terminals (shells) ---- */
+
+.ap-shells {
+  flex: none;
+  padding: 0 4px 12px;
+}
+
+.ap-shells:empty {
+  display: none;
+}
+
+.ap-shells-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--ap-r);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.ap-shells-toggle:hover {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
+
+.ap-shells-toggle svg {
+  transform: rotate(-90deg);
+  transition: transform var(--t-med);
+}
+
+.ap-shells-toggle.open svg {
+  transform: none;
+}
+
+.ap-shell-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 2px;
+}
+
+.ap-shell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--ap-r);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.ap-shell:hover {
+  background: var(--elev-2);
+}
+
+.ap-shell .ap-mark {
+  opacity: 0.75;
+}
+
+.ap-shell-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+
+.ap-shell-session {
+  flex: none;
+  max-width: 38%;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-shell .ap-ask {
+  margin-left: 0;
+}
+
+/* ---- chat ---- */
+
+.ap-chat {
+  min-height: 0;
+}
+
+.ap-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ap-welcome {
+  margin: auto 0;
+  padding: 0 12px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.ap-welcome-mark {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--ap-r-lg);
+  color: var(--accent);
+  background: linear-gradient(180deg, var(--elev-3), var(--elev-1));
+  box-shadow:
+    inset 0 0 0 1px var(--ap-line),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent),
+    0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.ap-welcome h3 {
+  font-family: var(--ui-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ap-welcome p {
+  margin-top: 5px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+.ap-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.ap-suggestion {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 99px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--elev-1);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+}
+
+.ap-suggestion:hover {
+  color: var(--text);
+  background: var(--elev-3);
+  box-shadow: inset 0 0 0 1px var(--hover-line);
+}
+
+.ap-suggestion:active {
+  transform: scale(0.97);
+}
+
+.ap-primary {
+  margin-top: 14px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--ap-r);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.ap-primary:hover {
+  filter: brightness(1.07);
+}
+
+.ap-primary:active {
+  transform: scale(0.98);
+}
+
+.ap-msg {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  animation: ap-in 220ms var(--ease-out);
+}
+
+.ap-msg.user {
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.ap-bubble {
+  max-width: 86%;
+  padding: 8px 12px;
+  border-radius: 14px 14px 5px 14px;
+  background: var(--elev-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ap-msg-refs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.ap-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ap-steps:not(:empty) {
+  margin-bottom: 9px;
+  padding-left: 1px;
+}
+
+.ap-step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  animation: ap-in 200ms var(--ease-out);
+}
+
+.ap-step span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-answer {
+  font-size: 12.5px;
+  line-height: 1.62;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.ap-answer p + p,
+.ap-answer p + ul,
+.ap-answer ul + p,
+.ap-answer pre + p,
+.ap-answer p + pre {
+  margin-top: 8px;
+}
+
+.ap-answer ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ap-answer li {
+  position: relative;
+  padding-left: 14px;
+}
+
+.ap-answer li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.72em;
+  width: 4px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: var(--text-faint);
+}
+
+.ap-answer strong {
+  font-weight: 600;
+}
+
+.ap-answer code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--elev-2);
+}
+
+.ap-code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  padding: 9px 11px;
+  border-radius: var(--ap-r);
+  background: var(--bg-pane);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.ap-muted {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.ap-thinking {
+  display: inline-block;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--text-faint) 0%,
+    var(--text-faint) 35%,
+    var(--text) 50%,
+    var(--text-faint) 65%,
+    var(--text-faint) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: ap-shimmer 1.8s linear infinite;
+}
+
+.ap-ref {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  height: 19px;
+  padding: 0 8px;
+  margin: 0 1px;
+  vertical-align: 1px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--elev-3);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-ref:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.ap-msg-meta {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+
+.ap-msg:hover .ap-msg-meta {
+  opacity: 1;
+}
+
+.ap-msg-meta:empty {
+  display: none;
+}
+
+.ap-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 9px 11px;
+  border-radius: var(--ap-r);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--status-err);
+  background: color-mix(in srgb, var(--status-err) 9%, transparent);
+}
+
+.ap-error span {
+  flex: 1;
+}
+
+.ap-retry {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--ap-r);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--elev-3);
+}
+
+/* ---- composer ---- */
+
+.ap-composer {
+  flex: none;
+  padding: 4px 12px 12px;
+}
+
+.ap-field {
+  border-radius: var(--ap-r-lg);
+  background: var(--elev-1);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+  transition: box-shadow var(--t-fast), background var(--t-fast);
+}
+
+.ap-field:focus-within {
+  background: var(--elev-2);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent),
+    0 0 0 3px var(--accent-dim);
+}
+
+.ap-attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 8px 0;
+}
+
+.ap-attached[hidden] {
+  display: none;
+}
+
+.ap-att {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 3px 0 8px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--elev-3);
+  white-space: nowrap;
+  animation: ap-in 160ms var(--ease-out);
+}
+
+.ap-att-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-att .ap-mark,
+.ap-att .ap-mark svg {
+  width: 13px;
+  height: 13px;
+}
+
+.ap-att button {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-faint);
+}
+
+.ap-att button:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.ap-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+}
+
+/* Beats the app-wide textarea focus ring: the whole field carries it. */
+.agents-panel .ap-input,
+.agents-panel .ap-input:focus {
+  flex: 1;
+  min-width: 0;
+  min-height: 26px;
+  max-height: 140px;
+  padding: 4px 0;
+  resize: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: none;
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: 12.5px;
+  line-height: 1.45;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ap-input::placeholder {
+  color: var(--text-faint);
+}
+
+.ap-send {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--ap-r);
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.ap-send:hover {
+  filter: brightness(1.07);
+}
+
+.ap-send:active {
+  transform: scale(0.94);
+}
+
+.ap-send:disabled {
+  opacity: 0.3;
+  cursor: default;
+  filter: none;
+  transform: none;
+}
+
+.agents-panel.running .ap-send {
+  color: var(--text);
+  background: var(--elev-3);
+}
+
+.ap-meta {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ap-meta:has(.ap-spend:empty) {
+  display: none;
+}
+
+.ap-spend {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-panel.locked .ap-meta {
+  visibility: hidden;
+}
+
+/* ---- pane drop target ---- */
+
+.ap-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: none;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg-sidebar) 78%, transparent);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+.ap-drop::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: var(--ap-r-lg);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+  transition: box-shadow var(--t-fast), background var(--t-fast);
+}
+
+body.dragging-term .ap-drop {
+  display: grid;
+}
+
+.agents-panel.drop-hover .ap-drop::before {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.ap-drop-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: var(--ap-r-lg);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--elev-2);
+  box-shadow: var(--shadow-2);
+  transition: transform var(--t-med), color var(--t-fast);
+}
+
+.ap-drop-card span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-panel.drop-hover .ap-drop-card {
+  color: var(--text);
+  transform: translateY(-2px);
+}
+
+.agents-panel.drop-hover .ap-drop-card svg {
+  color: var(--accent);
+}
+
+.ap-edge-drop {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  z-index: 60;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 9px;
+  writing-mode: vertical-rl;
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--elev-2);
+  box-shadow: var(--shadow-2), inset 0 0 0 1px var(--hairline);
+  transform: translateY(-50%);
+  transition: padding var(--t-med), color var(--t-fast), background var(--t-fast);
+}
+
+body.dragging-term .app:not(.agents-open) ~ .ap-edge-drop {
+  display: flex;
+}
+
+.ap-edge-drop.hover {
+  padding: 20px 13px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--elev-2));
+}
+
+.ap-edge-drop.hover svg {
+  color: var(--accent);
+}
+
+/* ---- pane highlight from rows / refs ---- */
+
+.pane.ap-peek {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.pane.ap-flash {
+  animation: ap-flash 900ms var(--ease-out);
+}
+
+@keyframes ap-flash {
+  0%,
+  40% {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}

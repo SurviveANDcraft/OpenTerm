@@ -16,3 +16,9 @@ declare module "*.png" {
   const url: string;
   export default url;
 }
+
+/** Vite inlines a `?raw` import as the file's text (used for SVG icons). */
+declare module "*.svg?raw" {
+  const markup: string;
+  export default markup;
+}

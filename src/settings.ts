@@ -1392,10 +1392,15 @@ export function createSettingsView(handlers: SettingsHandlers) {
       markDirty();
     });
 
+    const aiCards = toggle(s.agentCardSummaries, (v) => {
+      s.agentCardSummaries = v;
+      markDirty();
+    });
+
     cats.ai.push(
       section(
         "OpenRouter",
-        "Optional. Powers prompt refinement before delegating tasks, AI-named inbox items and AI backup search.",
+        "Optional. Powers the Agents panel assistant, prompt refinement before delegating tasks, AI-named inbox items and AI backup search.",
         [
           field("API key", keyWrap, {
             stack: true,
@@ -1409,6 +1414,12 @@ export function createSettingsView(handlers: SettingsHandlers) {
               ? "Approval prompts and errors get a short name and description. The original text stays on hover."
               : "Needs an API key — without one, notifications show the raw terminal text.",
             keywords: "summaries summary inbox",
+          }),
+          field("Summarize agents with AI", aiCards, {
+            desc: hasKey
+              ? "While the Agents panel is open, each agent gets a one-line name for its task and current state. Refreshes when an agent gets a new prompt or changes state."
+              : "Needs an API key. Without one, the list shows the last prompt and screen line.",
+            keywords: "agents panel cards summary sidebar assistant",
           }),
         ],
         { keywords: "openrouter ai api key" }

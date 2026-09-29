@@ -4,6 +4,7 @@ import "./usage.css";
 import "./searchModal.css";
 import "./tasks.css";
 import "./gitMap.css";
+import "./agents.css";
 import { invoke } from "@tauri-apps/api/core";
 import { store } from "./store";
 import { applyTheme } from "./themes";
@@ -100,6 +101,9 @@ import { createUsagePanel } from "./usagePanel";
 import { createGitMapPanel } from "./gitMapPanel";
 import { createTasksPanel, OpenPaneInfo } from "./tasksPanel";
 import { createInboxPanel } from "./inboxPanel";
+import { createAgentsPanel } from "./agentsPanel";
+import { setAgentResolver } from "./agentsData";
+import { forgetCardSummary } from "./agentsSummary";
 import {
   addInboxItem,
   clearGithubInboxItem,
@@ -231,6 +235,7 @@ function paneAgentName(id: string, session: Session): string | null {
 }
 
 function forgetPaneActivity(id: string): void {
+  forgetCardSummary(id);
   paneBusySince.delete(id);
   const t = paneQuietTimers.get(id);
   if (t !== undefined) window.clearTimeout(t);
@@ -1109,6 +1114,17 @@ function claimPaneAgent(paneId: string, command: string | null | undefined): voi
   agentClaimAt.set(paneId, Date.now());
   syncPaneAgentBadge(paneId, command);
 }
+
+/** What the Agents panel shows as running in a pane: the process tree's
+ *  answer, or a just-typed agent command still inside its grace window. */
+setAgentResolver((paneId) => {
+  const live = liveHarnesses[paneId];
+  if (live) return live;
+  const at = agentClaimAt.get(paneId);
+  if (at == null || Date.now() - at >= AGENT_CLAIM_GRACE_MS) return null;
+  const s = sessionOfPane(paneId);
+  return s ? paneAgentName(paneId, s) : null;
+});
 
 /** Matches the Rust poller's own 3s sweep — there is nothing fresher to read. */
 const LIVE_HARNESS_POLL_MS = 3000;
@@ -2193,6 +2209,7 @@ function applySettingsLive(): void {
   panes.forEach((p) => p.applySettings(s));
   syncAllExternal();
   updateChrome();
+  agentsPanel.refreshSettings();
   store.save();
 }
 
@@ -2569,6 +2586,9 @@ function runAction(action: Action, e?: KeyboardEvent): void {
     case "openInbox":
       toggleInbox();
       break;
+    case "toggleAgents":
+      agentsPanel.toggle();
+      break;
     case "restoreLast":
       trash.restore();
       break;
@@ -2785,6 +2805,32 @@ const inboxPanel = createInboxPanel({
   onGoToSettings: () => openSettings(),
   onUpdateHarness: (item) => void updateHarnessFromInbox(item),
   onReviewGithub: (item, agent) => void reviewGithubWithAgent(item, agent),
+});
+
+const agentsPanel = createAgentsPanel({
+  focusPane: (sessionId, paneId) => {
+    if (store.state.activeSessionId !== sessionId) setActiveSession(sessionId);
+    requestAnimationFrame(() => focusPane(paneId));
+  },
+  openAiSettings: () => {
+    openSettings();
+    settingsView.openCategory("ai");
+  },
+  onLayoutChange: () => {
+    const refit = (): void => {
+      const s = activeSession();
+      if (s) fitSessionSoon(s);
+      syncAllExternal();
+      syncAllBrowsers();
+    };
+    requestAnimationFrame(refit);
+    // Once more after the slide-in/out transition settles.
+    window.setTimeout(refit, 220);
+  },
+  focusWorkspace: () => {
+    const s = activeSession();
+    focusPane(s ? focusedPane.get(s.id) : undefined);
+  },
 });
 
 const fileViewer = createFileViewerPanel({ onRequestClose: () => void requestCloseFile() });
@@ -3329,7 +3375,7 @@ cheatEl.addEventListener("click", (e) => {
 // the webview never sees pointerup. Losing focus clears the stranded drag state
 // (grabbing cursor + drop overlays that would otherwise swallow all input).
 window.addEventListener("blur", () => {
-  document.body.classList.remove("dragging-pane");
+  document.body.classList.remove("dragging-pane", "dragging-term");
   document.querySelectorAll<HTMLElement>(".drag-ghost").forEach((g) => g.remove());
 });
 
@@ -3592,7 +3638,7 @@ async function boot(): Promise<void> {
   onOpenFolder(openFolderSession);
 
   main.append(viewsEl, emptyEl, settingsView.el, fileViewer.el);
-  appBody.append(sidebar.el, sidebarResizer, main);
+  appBody.append(sidebar.el, sidebarResizer, main, agentsPanel.el);
   root.append(
     titlebar.el,
     appBody,
@@ -3606,9 +3652,12 @@ async function boot(): Promise<void> {
     searchModal.el,
     trashToast.el
   );
+  // After #app, so its CSS can key off the panel being closed.
+  document.body.append(agentsPanel.edge);
   setupSidebarResize();
 
   applySettingsLive();
+  agentsPanel.restore();
   // Re-check the minimum once the kbd label is rendered and fonts have loaded.
   void document.fonts.ready.then(() =>
     requestAnimationFrame(() => {
