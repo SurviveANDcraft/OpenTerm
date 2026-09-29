@@ -38,3 +38,6 @@ desktop.ini
 # runner does not.
 Plans/
 plans/
+
+# Local agent instructions
+CLAUDE.md
