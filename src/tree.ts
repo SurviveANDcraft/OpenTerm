@@ -131,7 +131,16 @@ export function resizeLeaf(root: PaneNode, leafId: string, dir: Dir, delta: numb
   for (let i = path.length - 1; i >= 0; i--) {
     const { node, index } = path[i];
     if (node.dir !== dir || node.children.length < 2) continue;
-    const other = index < node.children.length - 1 ? index + 1 : index - 1;
+    // Trade space with the nearest *unfolded* sibling — a folded one is pinned
+    // to its bar, so resizing against it would change nothing on screen.
+    const live = (j: number) => {
+      const c = node.children[j];
+      return !(c.type === "leaf" && c.folded);
+    };
+    let other = -1;
+    for (let j = index + 1; j < node.children.length && other < 0; j++) if (live(j)) other = j;
+    for (let j = index - 1; j >= 0 && other < 0; j--) if (live(j)) other = j;
+    if (other < 0) continue;
     const a = node.sizes[index] + delta;
     const b = node.sizes[other] - delta;
     if (a < MIN_SIZE || b < MIN_SIZE) return false;

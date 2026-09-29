@@ -301,8 +301,15 @@ pub fn position_browser_pane(
         // pin the browser container back on top so its content is actually seen.
         let raw = crate::APP_HWND.load(std::sync::atomic::Ordering::Relaxed);
         if raw != 0 {
+            // find_webview_hwnd matches against SCREEN rects; x/y are
+            // client-relative, so translate first.
+            let parent = crate::hwnd(raw);
+            let mut origin = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::ClientToScreen(parent, &mut origin);
+            }
             if let Some(container) =
-                find_webview_hwnd(crate::hwnd(raw), x, y, w, h)
+                find_webview_hwnd(parent, origin.x + x, origin.y + y, w, h)
             {
                 unsafe {
                     let _ = SetWindowPos(

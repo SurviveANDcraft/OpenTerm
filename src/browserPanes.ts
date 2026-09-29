@@ -1207,12 +1207,19 @@ export class PaneBrowser {
     if (this.creating) return;
     const hiddenForDrag = this.dragActive && dragSourceId !== this.id;
     this.layoutStage();
+    // Expanding another pane only *covers* this one with CSS (z-index), so it
+    // keeps its layout box — but the native webview paints above all DOM and
+    // would float over the expanded pane. Treat "covered by a zoom" as hidden.
+    const view = this.el.closest(".session-view");
+    const coveredByZoom =
+      !!view?.classList.contains("has-zoom") && !this.el.classList.contains("zoomed");
     const visible =
       !overlaysOpen &&
       !hiddenForDrag &&
+      !coveredByZoom &&
       !this.foldHide &&
       !this.menu &&
-      this.el.closest(".session-view.active") !== null &&
+      view?.classList.contains("active") === true &&
       this.host.offsetParent !== null &&
       this.el.offsetParent !== null;
     const rect = this.viewRect();

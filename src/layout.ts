@@ -73,6 +73,9 @@ export function applyZoom(session: Session, view: HTMLElement): void {
   view.querySelectorAll<HTMLElement>(".pane").forEach((p) => {
     p.classList.toggle("zoomed", !!zoomed && p.dataset.paneId === zoomed);
   });
+  // Covered panes keep their size, so no ResizeObserver fires — browser
+  // webviews must be told to hide/show explicitly.
+  browserPanes.forEach((b) => b.syncSoon());
 }
 
 /** Height (or width, in a row split) a folded pane collapses to: exactly its
@@ -124,9 +127,10 @@ function applyFoldNode(node: PaneNode, el: HTMLElement, parentDir: Dir | null): 
     applyFoldNode(child, childEl, node.dir);
     const divider = el.children[i * 2 + 1] as HTMLElement | undefined;
     if (divider?.classList.contains("divider")) {
-      // Dragging a divider writes flex on both neighbours — pointless against a
-      // pane pinned to its bar height, so it is inert while one side is folded.
-      divider.classList.toggle("inert", isFolded(child) || isFolded(node.children[i + 1]));
+      // A divider next to a folded pane resizes the nearest *live* panes on
+      // either side (see liveNeighbours) — it is only inert when one side has
+      // nothing but folded panes, so there is genuinely nothing to resize.
+      divider.classList.toggle("inert", liveNeighbours(node, i) === null);
     }
   });
   // Free space appears only when *every* child is folded — otherwise the live
@@ -137,6 +141,18 @@ function applyFoldNode(node: PaneNode, el: HTMLElement, parentDir: Dir | null): 
 
 function isFolded(node: PaneNode | undefined): boolean {
   return !!node && node.type === "leaf" && !!node.folded;
+}
+
+/** The closest unfolded child at or before `index` and at or after
+ *  `index + 1` — the pair the divider between `index` and `index + 1`
+ *  actually resizes. Folded panes are pinned to their bar, so dragging past
+ *  one just slides it along. null when either side is entirely folded. */
+function liveNeighbours(split: SplitNode, index: number): [number, number] | null {
+  let a = index;
+  while (a >= 0 && isFolded(split.children[a])) a--;
+  let b = index + 1;
+  while (b < split.children.length && isFolded(split.children[b])) b++;
+  return a >= 0 && b < split.children.length ? [a, b] : null;
 }
 
 function renderNode(node: PaneNode, onSizesChanged: () => void): HTMLElement {
@@ -181,28 +197,46 @@ function makeDivider(
   div.className = "divider";
 
   div.addEventListener("pointerdown", (e: PointerEvent) => {
+    const pair = liveNeighbours(split, index);
+    if (!pair) return;
+    const [ia, ib] = pair;
     e.preventDefault();
     div.setPointerCapture(e.pointerId);
     div.classList.add("active");
     document.body.classList.add(split.dir === "row" ? "resizing-x" : "resizing-y");
 
     const horizontal = split.dir === "row";
-    const rect = splitEl.getBoundingClientRect();
-    const total = horizontal ? rect.width : rect.height;
     const start = horizontal ? e.clientX : e.clientY;
-    const startA = split.sizes[index];
-    const startB = split.sizes[index + 1];
+    const startA = split.sizes[ia];
+    const startB = split.sizes[ib];
+    // Live panes share the free space in proportion to their sizes (flexFor
+    // renormalises over live children), so map pixels onto that space rather
+    // than the whole split — otherwise the edge lags the cursor when some
+    // siblings are folded.
+    let livePx = 0;
+    let liveSum = 0;
+    split.children.forEach((c, j) => {
+      if (isFolded(c)) return;
+      const r = (splitEl.children[j * 2] as HTMLElement).getBoundingClientRect();
+      livePx += horizontal ? r.width : r.height;
+      liveSum += split.sizes[j];
+    });
+    if (livePx <= 0 || liveSum <= 0) {
+      const rect = splitEl.getBoundingClientRect();
+      livePx = horizontal ? rect.width : rect.height;
+      liveSum = 1;
+    }
 
     const onMove = (ev: PointerEvent) => {
       const pos = horizontal ? ev.clientX : ev.clientY;
-      let d = (pos - start) / total;
+      let d = ((pos - start) / livePx) * liveSum;
       d = Math.max(MIN_SIZE - startA, Math.min(startB - MIN_SIZE, d));
-      split.sizes[index] = startA + d;
-      split.sizes[index + 1] = startB - d;
-      const elA = splitEl.children[index * 2] as HTMLElement;
-      const elB = splitEl.children[(index + 1) * 2] as HTMLElement;
-      elA.style.flex = flexFor(split, index);
-      elB.style.flex = flexFor(split, index + 1);
+      split.sizes[ia] = startA + d;
+      split.sizes[ib] = startB - d;
+      const elA = splitEl.children[ia * 2] as HTMLElement;
+      const elB = splitEl.children[ib * 2] as HTMLElement;
+      elA.style.flex = flexFor(split, ia);
+      elB.style.flex = flexFor(split, ib);
     };
 
     const onUp = () => {

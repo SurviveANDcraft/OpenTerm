@@ -3404,6 +3404,10 @@ function anyOverlayOpen(): boolean {
 
 function refreshBrowserSuppression(): void {
   setBrowserOverlaysOpen(anyOverlayOpen());
+  // Safety net for any layout change that forgets to notify the browsers
+  // (zoom, session switch, CSS-only covers…). syncNow dedupes on its state
+  // key, so this only reaches native code when something actually changed.
+  syncAllBrowsers();
 }
 window.setInterval(refreshBrowserSuppression, 200);
 
