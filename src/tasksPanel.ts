@@ -2,6 +2,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { store } from "./store";
 import { trash } from "./trash";
 import { collapse, cancelCollapse } from "./popAnim";
+import { createIssuesView } from "./issuesView";
 import {
   delegationActive,
   DelegationAgent,
@@ -45,6 +46,10 @@ export interface TasksPanelHandlers {
   onDelegate(session: Session, task: Task, agent: DelegationAgent, trigger: DelegationTrigger): void;
   /** Drop a task's active delegation without running it. */
   onCancelDelegate(session: Session, task: Task): void;
+  /** Show a URL in one of the session's browser panes. */
+  onOpenUrl(session: Session, url: string): void;
+  /** Open a new terminal in the session and run `command` in it. */
+  onRunInTerminal(session: Session, command: string): void;
 }
 
 function esc(s: string): string {
@@ -127,8 +132,16 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
 
   const heading = document.createElement("div");
   heading.className = "tasks-heading";
+  // The title doubles as the Tasks / Issues switch: two headings side by side,
+  // the inactive one dimmed, so the tab strip costs no extra row.
   const title = document.createElement("h2");
-  title.textContent = "Tasks";
+  title.className = "tasks-modes";
+  const tasksTab = document.createElement("button");
+  tasksTab.textContent = "Tasks";
+  const issuesTab = document.createElement("button");
+  issuesTab.innerHTML = `Issues<span class="tasks-mode-count"></span>`;
+  issuesTab.title = "GitHub issues for this session's repo";
+  title.append(tasksTab, issuesTab);
   const subtitle = document.createElement("div");
   subtitle.className = "tasks-subtitle";
   heading.append(title, subtitle);
@@ -197,6 +210,70 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
 
   card.append(head, toolbar, body);
   el.appendChild(card);
+
+  /** Which tab is showing, remembered per session for the app's lifetime. */
+  let mode: "tasks" | "issues" = "tasks";
+  const modeBySession = new Map<string, "tasks" | "issues">();
+
+  const issues = createIssuesView({
+    findTask: (session, repo, number) =>
+      sessionTasks(session).find((t) => t.issue?.repo === repo && t.issue.number === number),
+    ensureTask: (session, repo, issue) => {
+      const existing = sessionTasks(session).find(
+        (t) => t.issue?.repo === repo && t.issue.number === issue.number
+      );
+      if (existing) return existing;
+      const t = newTask(issue.title);
+      t.status = sessionStages(session)[0].id;
+      t.tags = issue.labels.map((l) => l.name);
+      t.issue = { repo, number: issue.number, url: issue.url };
+      // The body plus the latest few comments: enough context for whoever (or
+      // whichever agent) picks the task up, without the whole thread.
+      const recent = issue.comments.slice(-5);
+      t.description = [
+        issue.body?.trim() || "",
+        recent.length
+          ? "Comments:\n" +
+            recent.map((c) => `@${c.author?.login ?? "ghost"}: ${c.body.trim()}`).join("\n\n")
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      sessionTasks(session).push(t);
+      store.save();
+      return t;
+    },
+    showTask: (task) => {
+      issues.hide();
+      setMode("tasks");
+      scope = "session";
+      selectedTaskId = task.id;
+      render();
+    },
+    delegate: (session, task, anchor) => openDelegatePopover(task, session, anchor),
+    onIssueState: (session, task, closed) => {
+      const stages = sessionStages(session);
+      const doneStage = stages.find((st) => st.done);
+      if (closed && doneStage && task.status !== doneStage.id) task.status = doneStage.id;
+      else if (!closed && isTaskDone(session, task)) task.status = stages[0].id;
+      else return;
+      touch(task);
+    },
+    openUrl: (session, url) => handlers.onOpenUrl(session, url),
+    runInTerminal: (session, command) => handlers.onRunInTerminal(session, command),
+    onCount: (count) => setIssueCount(count),
+  });
+  card.appendChild(issues.el);
+
+  function setIssueCount(count: number | null): void {
+    const badge = issuesTab.querySelector<HTMLElement>(".tasks-mode-count")!;
+    badge.textContent = count ? String(count) : "";
+  }
+
+  function setMode(next: "tasks" | "issues"): void {
+    mode = next;
+    if (homeSession) modeBySession.set(homeSession.id, next);
+  }
 
   let open = false;
   /** The session the panel was opened from — always the target for new tasks,
@@ -1384,6 +1461,16 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
 
   function render(): void {
     if (!homeSession) return;
+    tasksTab.classList.toggle("active", mode === "tasks");
+    issuesTab.classList.toggle("active", mode === "issues");
+    card.classList.toggle("issues-mode", mode === "issues");
+    if (mode === "issues") {
+      subtitle.textContent = `${homeSession.name} · GitHub issues`;
+      newBtn.querySelector("span")!.textContent = "New issue";
+      newBtn.title = "New issue";
+      return;
+    }
+    newBtn.querySelector("span")!.textContent = "New task";
     const entries = visibleEntries();
     const done = entries.filter((e) => isTaskDone(e.session, e.task)).length;
     const open = entries.length - done;
@@ -1544,6 +1631,9 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
       parts.push(
         `<span class="tasks-chip tasks-session-chip"><span class="tasks-session-dot" style="background:${badgeSession.color}"></span>${esc(badgeSession.name)}</span>`
       );
+    }
+    if (t.issue) {
+      parts.push(`<span class="tasks-chip tasks-issue-chip" title="GitHub issue ${esc(t.issue.repo)}#${t.issue.number}">#${t.issue.number}</span>`);
     }
     parts.push(`<span class="tasks-chip tasks-prio" style="--c:${priorityColor(t.priority)}">${esc(priorityLabel(t.priority))}</span>`);
     if (t.dueDate) {
@@ -2120,6 +2210,7 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
     filterStatus = "all";
     closeDelegatePopover(true); // both float on body — don't leave them behind
     closeStageMenu(true);
+    issues.hide();
     renamingStageId = null;
     el.classList.remove("visible");
     handlers.onChanged?.();
@@ -2133,20 +2224,44 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
     search = "";
     searchInput.value = "";
     selectedTaskId = focusTaskId ?? null;
+    mode = focusTaskId ? "tasks" : (modeBySession.get(s.id) ?? "tasks");
+    setIssueCount(issues.peekCount(s));
     open = true;
     el.classList.add("visible");
     render();
-    if (!focusTaskId) requestAnimationFrame(() => searchInput.focus());
+    if (mode === "issues") {
+      issues.show(s);
+      requestAnimationFrame(() => issues.focusSearch());
+    } else if (!focusTaskId) requestAnimationFrame(() => searchInput.focus());
   }
+
+  function switchMode(next: "tasks" | "issues"): void {
+    if (mode === next || !homeSession) return;
+    closeDelegatePopover(true);
+    closeStageMenu(true);
+    if (next === "issues") deselectSilently();
+    else issues.hide();
+    setMode(next);
+    render();
+    if (next === "issues") {
+      issues.show(homeSession);
+      requestAnimationFrame(() => issues.focusSearch());
+    } else {
+      requestAnimationFrame(() => searchInput.focus());
+    }
+  }
+  tasksTab.addEventListener("click", () => switchMode("tasks"));
+  issuesTab.addEventListener("click", () => switchMode("issues"));
 
   el.addEventListener("pointerdown", (e) => {
     if (e.target === el) close();
   });
   card.addEventListener("pointerdown", (e) => e.stopPropagation());
   closeBtn.addEventListener("click", () => close());
-  newBtn.addEventListener("click", () =>
-    createNewTask(filterStatus === "all" ? undefined : filterStatus)
-  );
+  newBtn.addEventListener("click", () => {
+    if (mode === "issues") issues.newIssue();
+    else createNewTask(filterStatus === "all" ? undefined : filterStatus);
+  });
   listViewBtn.addEventListener("click", () => {
     view = "list";
     if (homeSession) homeSession.taskView = "list";
@@ -2178,7 +2293,9 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
   el.addEventListener("keydown", (e) => {
     e.stopPropagation();
     if (e.key === "Escape") {
-      if (selectedTaskId) selectTask(null);
+      if (mode === "issues") {
+        if (!issues.handleEscape()) close();
+      } else if (selectedTaskId) selectTask(null);
       else close();
     }
   });
@@ -2191,7 +2308,9 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
     /** Re-render (only while open) — main.ts calls this when a delegation's
      *  status changes behind the panel's back, so pills stay truthful. */
     refresh: () => {
-      if (open) render();
+      if (!open) return;
+      render();
+      if (mode === "issues") issues.refresh();
     },
   };
 }
