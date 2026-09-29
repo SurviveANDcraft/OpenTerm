@@ -2791,7 +2791,39 @@ const tasksPanel = createTasksPanel({
   },
   onDelegate: (session, task, agent, trigger) => delegateTask(session, task, agent, trigger),
   onCancelDelegate: (session, task) => cancelDelegation(session, task),
+  // Browser panes are native webviews that sit above HTML overlays, so the
+  // panel steps aside for anything it opens in the workspace.
+  onOpenUrl: (session, url) => {
+    tasksPanel.close();
+    setActiveSession(session.id);
+    const anchorId = focusedPane.get(session.id) ?? collectLeaves(session.tree)[0];
+    if (anchorId) openLinkInBrowserPane(anchorId, url);
+  },
+  onRunInTerminal: (session, command) => {
+    tasksPanel.close();
+    setActiveSession(session.id);
+    void runInNewTerminal(session, command);
+  },
 });
+
+/** Splits a fresh terminal off the session's focused pane and types `command`
+ *  into it once the shell is up. */
+async function runInNewTerminal(session: Session, command: string): Promise<void> {
+  const anchorId = focusedPane.get(session.id) ?? collectLeaves(session.tree)[0];
+  if (!anchorId) return;
+  const newId = uid();
+  createPaneTerm(newId);
+  session.tree = splitLeaf(session.tree, anchorId, "row", newId);
+  session.zoomed = null;
+  rerender(session);
+  requestAnimationFrame(() => focusPane(newId));
+  const term = panes.get(newId);
+  if (!term) return;
+  await term.ensureSpawned(store.state.settings.shell, session.cwd ?? null, null);
+  await new Promise((r) => setTimeout(r, 500));
+  if (panes.has(newId)) void writePty(newId, `${command}`);
+  store.save(true);
+}
 
 const inboxPanel = createInboxPanel({
   onGoToPane: (sessionId, paneId) => {

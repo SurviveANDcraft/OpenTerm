@@ -293,6 +293,16 @@ export interface Task {
   /** One active hand-off to an AI agent at a time — creating a new one while
    *  one is pending cancels/replaces the old. */
   delegation?: TaskDelegation;
+  /** Set when the task was made from a GitHub issue — links it back so the
+   *  Issues view can find it and the delegation prompt can reference it. */
+  issue?: TaskIssueLink;
+}
+
+export interface TaskIssueLink {
+  /** "owner/name". */
+  repo: string;
+  number: number;
+  url: string;
 }
 
 /** A column on the task board. Stages are per-session and fully user-editable:

@@ -30,6 +30,13 @@ export function buildDelegationPrompt(task: Task): string {
       "Attached files (absolute paths):\n" + task.files.map((f) => `- ${f}`).join("\n")
     );
   }
+  if (task.issue) {
+    parts.push(
+      `This task tracks GitHub issue #${task.issue.number} (${task.issue.url}). ` +
+        `Include "Fixes #${task.issue.number}" in the commit message so the issue closes when the work merges. ` +
+        `Don't close or comment on the issue yourself.`
+    );
+  }
   return parts.join("\n\n");
 }
 

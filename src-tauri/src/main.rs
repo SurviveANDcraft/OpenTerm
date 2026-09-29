@@ -46,6 +46,7 @@ mod assistant;
 mod browser;
 mod dictation;
 mod git;
+mod github;
 mod harness;
 mod shell_integration;
 mod usage;
@@ -1749,6 +1750,13 @@ fn main() {
             usage::live_pane_harnesses,
             git::check_github_status,
             git::git_map,
+            github::gh_status,
+            github::gh_issue_list,
+            github::gh_issue_view,
+            github::gh_issue_set_state,
+            github::gh_issue_comment,
+            github::gh_issue_create,
+            github::gh_issue_assign_me,
             harness::check_harness_updates,
             harness::update_harness,
             dictation::host::dictation_sync,

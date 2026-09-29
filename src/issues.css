@@ -1,0 +1,849 @@
+/* ================= Tasks panel · Issues tab =================
+ *
+ * Builds on tasks.css: same toolbar, rows, chips, drawer and control sizes
+ * (--tk-ctl, --tk-r-*). Only what is specific to issues lives here.
+ *
+ * State colours follow GitHub's meaning without its palette: open is
+ * --success, closed is --accent, closed-as-not-planned is muted.
+ */
+
+/* ---- header: Tasks / Issues switch ---- */
+
+.tasks-modes {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.tasks-modes button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  color: var(--text-faint);
+  position: relative;
+  padding-bottom: 2px;
+  transition: color var(--t-fast);
+}
+
+.tasks-modes button:hover {
+  color: var(--text-dim);
+}
+
+.tasks-modes button.active {
+  color: var(--text);
+}
+
+/* A short accent underline under the active heading, drawn from the left. */
+.tasks-modes button::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 220ms var(--ease-out);
+}
+
+.tasks-modes button.active::after {
+  transform: scaleX(1);
+}
+
+.tasks-mode-count:empty {
+  display: none;
+}
+
+.tasks-mode-count {
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--elev-2);
+  border: 1px solid var(--border-soft);
+  font-family: var(--ui-font);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.tasks-modes button.active .tasks-mode-count {
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent-text);
+}
+
+/* ---- tab swap ---- */
+
+.iss {
+  display: none;
+}
+
+.tasks-card.issues-mode > .tasks-toolbar,
+.tasks-card.issues-mode > .tasks-body {
+  display: none;
+}
+
+.tasks-card.issues-mode > .iss {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  animation: iss-in 200ms var(--ease-out);
+}
+
+@keyframes iss-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* ---- toolbar extras ---- */
+
+.iss-repo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--tk-ctl);
+  max-width: 260px;
+  padding: 0 10px;
+  border-radius: var(--tk-r-ctl);
+  border: 1px solid var(--border);
+  background: var(--bg-app);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.iss-repo span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iss-repo svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.iss-repo svg:last-child {
+  width: 10px;
+  height: 10px;
+  opacity: 0;
+  margin-left: -2px;
+  transition: opacity var(--t-fast);
+}
+
+.iss-repo:hover {
+  color: var(--text);
+  border-color: var(--hover-line);
+}
+
+.iss-repo:hover svg:last-child {
+  opacity: 0.8;
+}
+
+.iss-refresh.spinning svg {
+  animation: iss-spin 800ms linear infinite;
+}
+
+@keyframes iss-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- error banner ---- */
+
+.iss-banner {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  margin: 10px var(--tk-pad) 0;
+  padding: 4px 4px 4px 12px;
+  border-radius: var(--tk-r-ctl);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.iss-banner.visible {
+  display: flex;
+  animation: iss-in 180ms var(--ease-out);
+}
+
+.iss-banner span {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- list ---- */
+
+.iss-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.iss-row {
+  gap: 12px;
+  min-height: 52px;
+  animation: iss-row-in 260ms var(--ease-out) backwards;
+  animation-delay: calc(var(--i, 0) * 18ms);
+}
+
+@keyframes iss-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.iss-row.busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.iss-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.iss-row-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The state glyph is also the tick-off button: hovering an open issue previews
+   the check it would become. */
+.iss-state {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 -3px;
+  border-radius: 50%;
+  transition: background var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+
+.iss-state svg {
+  width: 16px;
+  height: 16px;
+}
+
+.iss-state.open {
+  color: var(--success);
+}
+
+.iss-state.closed {
+  color: var(--accent);
+}
+
+.iss-state.skipped {
+  color: var(--text-faint);
+}
+
+.iss-state:hover {
+  background: var(--bg-hover);
+}
+
+.iss-state:active {
+  transform: scale(0.9);
+}
+
+.iss-state.open:hover {
+  color: var(--accent);
+}
+
+.iss-row .tasks-row-meta {
+  flex-wrap: nowrap;
+}
+
+.iss-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.iss-count svg {
+  width: 12px;
+  height: 12px;
+}
+
+.iss-avatars {
+  display: inline-flex;
+  padding-left: 5px;
+}
+
+.iss-avatars .iss-avatar {
+  margin-left: -5px;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+
+.iss-row:hover .iss-avatars .iss-avatar {
+  box-shadow: 0 0 0 2px var(--bg-hover);
+}
+
+.iss-avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: hsl(var(--h) 38% 34%);
+  color: hsl(var(--h) 70% 88%);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.iss-avatar.lg {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.tasks-chip.iss-label {
+  color: color-mix(in srgb, var(--c) 70%, var(--text));
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+  border-color: color-mix(in srgb, var(--c) 38%, transparent);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tasks-chip.iss-linked,
+.tasks-chip.tasks-issue-chip {
+  color: var(--accent-text);
+  background: var(--accent-dim);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.tasks-chip.tasks-issue-chip {
+  font-family: var(--mono);
+}
+
+/* The row's robot stays hidden until hover, like the task rows' actions. */
+.iss-row .iss-deleg {
+  opacity: 0;
+}
+
+.iss-row:hover .iss-deleg,
+.iss-row:focus-within .iss-deleg {
+  opacity: 1;
+}
+
+/* ---- loading skeleton ---- */
+
+.iss-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 52px;
+  padding: 0 12px;
+}
+
+.iss-skel-dot,
+.iss-skel-lines span,
+.iss-skel-text span {
+  background: linear-gradient(90deg, var(--elev-1) 0%, var(--elev-3) 50%, var(--elev-1) 100%);
+  background-size: 200% 100%;
+  animation: iss-shimmer 1.3s ease-in-out infinite;
+}
+
+.iss-skel-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+
+.iss-skel-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.iss-skel-lines span {
+  height: 10px;
+  width: var(--w);
+  border-radius: 4px;
+}
+
+.iss-skel-lines span + span {
+  height: 8px;
+  width: calc(var(--w) * 0.45);
+}
+
+.iss-skel-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.iss-skel-text span {
+  height: 10px;
+  border-radius: 4px;
+}
+
+.iss-skel-text span:nth-child(2) {
+  width: 86%;
+}
+
+.iss-skel-text span:nth-child(3) {
+  width: 58%;
+}
+
+@keyframes iss-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* ---- gate states (not installed / not signed in / no repo) ---- */
+
+.iss-gate-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.iss-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--tk-ctl);
+  padding: 0 11px;
+  border-radius: var(--tk-r-ctl);
+  border: 1px solid var(--border);
+  background: var(--bg-app);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), transform var(--t-fast);
+}
+
+.iss-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.iss-btn:hover:not(:disabled) {
+  border-color: var(--hover-line);
+  background: var(--bg-hover);
+}
+
+.iss-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.iss-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.iss-btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.iss-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.tasks-new-btn:disabled {
+  opacity: 0.5;
+  filter: none;
+  cursor: default;
+}
+
+/* ---- drawer ---- */
+
+.iss-head-btns {
+  display: flex;
+  gap: 2px;
+}
+
+.iss-scroll {
+  gap: 14px;
+}
+
+.iss-title {
+  font-family: var(--ui-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.iss-byline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -4px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.iss-byline strong {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.iss-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.iss-badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+.iss-badge.open {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.iss-badge.closed {
+  color: var(--accent-text);
+  background: var(--accent-dim);
+}
+
+.iss-badge.skipped {
+  color: var(--text-dim);
+  background: var(--elev-2);
+}
+
+.iss-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.iss-assign {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.iss-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iss-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--tk-r-chip);
+  color: var(--accent-text);
+  font-size: 11.5px;
+  transition: background var(--t-fast);
+}
+
+.iss-link-btn svg {
+  width: 11px;
+  height: 11px;
+}
+
+.iss-link-btn:hover:not(:disabled) {
+  background: var(--accent-dim);
+}
+
+.iss-muted {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+/* ---- rendered Markdown ---- */
+
+.iss-md {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.iss-md > * + * {
+  margin-top: 8px;
+}
+
+.iss-md h4 {
+  font-family: var(--ui-display);
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 14px;
+}
+
+.iss-md h4:first-child {
+  margin-top: 0;
+}
+
+.iss-md ul,
+.iss-md ol {
+  padding-left: 18px;
+}
+
+.iss-md li + li {
+  margin-top: 3px;
+}
+
+.iss-md code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--elev-2);
+  border: 1px solid var(--border-soft);
+}
+
+.iss-md pre {
+  padding: 10px 12px;
+  border-radius: var(--tk-r-ctl);
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  overflow-x: auto;
+}
+
+.iss-md pre code {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.iss-md blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+
+.iss-md hr {
+  border: none;
+  border-top: 1px solid var(--hairline);
+}
+
+.iss-md a {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.iss-md a:hover {
+  text-decoration-color: currentColor;
+}
+
+.iss-md-ref {
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.iss-md-check {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border-radius: 3px;
+  border: 1.5px solid var(--text-faint);
+}
+
+.iss-md-check.on {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.iss-md li:has(> .iss-md-check) {
+  list-style: none;
+  margin-left: -16px;
+}
+
+/* ---- comments ---- */
+
+.iss-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.iss-thread-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.iss-comment {
+  display: flex;
+  gap: 10px;
+}
+
+.iss-comment-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.iss-comment-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+  font-size: 11.5px;
+}
+
+.iss-comment-head strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.iss-comment-head span {
+  color: var(--text-faint);
+}
+
+.iss-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.iss-reply .tasks-desc {
+  min-height: 64px;
+}
+
+.iss-reply-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ---- footer ---- */
+
+.iss-foot .tasks-drawer-foot-actions {
+  gap: 6px;
+}
+
+.iss-split {
+  display: flex;
+  margin-left: auto;
+}
+
+.iss-split .iss-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.iss-split-more {
+  width: 24px;
+  padding: 0;
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.iss-split-more svg {
+  width: 10px;
+  height: 10px;
+}
+
+.iss-close svg {
+  color: var(--accent);
+}
+
+.iss-reopen {
+  margin-left: auto;
+}
+
+.iss-reopen svg {
+  color: var(--success);
+}
+
+.stage-menu-item.iss-menu-close svg {
+  color: var(--accent);
+}
+
+.iss-compose-where {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iss-compose-body {
+  min-height: 180px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks-card.issues-mode > .iss,
+  .iss-banner.visible,
+  .iss-row,
+  .iss-refresh.spinning svg,
+  .iss-skel-dot,
+  .iss-skel-lines span,
+  .iss-skel-text span {
+    animation: none;
+  }
+
+  .tasks-modes button::after {
+    transition: none;
+  }
+}
