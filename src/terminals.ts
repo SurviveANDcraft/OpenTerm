@@ -19,6 +19,7 @@ import {
   runNextNow,
 } from "./commandQueue";
 import { prettyChord } from "./keybinds";
+import { paneDropZoneAt, type PaneDropZone } from "./paneDropZones";
 import { ACTIONS, type Action, type Dir, type Settings } from "./types";
 import { getTermTheme } from "./themes";
 import { createPaneUsagePill, type AgentHarness, type PaneUsagePill } from "./usageLimits";
@@ -693,6 +694,9 @@ export class PaneTerm {
       let ghostLabel: HTMLElement | null = null;
       let targetEl: HTMLElement | null = null;
       let region: DropRegion | null = null;
+      // A non-pane drop target under the pointer (the Agents panel), which
+      // takes precedence over pane targets and works in either mode.
+      let zone: PaneDropZone | null = null;
       // Alt held ⇒ "give this terminal as context" instead of "move this pane".
       // Re-read on every pointermove so the user can flip modes mid-drag.
       let ctxMode = e.altKey;
@@ -712,10 +716,15 @@ export class PaneTerm {
           /* capture may already be gone after a reparent */
         }
         if (!dragging) return;
-        document.body.classList.remove("dragging-pane", "dragging-context");
+        document.body.classList.remove("dragging-pane", "dragging-context", "dragging-term");
         ghost?.remove();
         ghost = null;
         clearHints();
+        zone?.setHover(null);
+        if (commit && zone) {
+          zone.drop(id);
+          return;
+        }
         if (commit && targetEl?.isConnected) {
           const target = targetEl.dataset.paneId;
           if (target && ctxMode) handlers.onSendContext(id, target);
@@ -733,7 +742,8 @@ export class PaneTerm {
           } catch {
             /* best-effort; window listeners are the real guarantee */
           }
-          document.body.classList.add("dragging-pane");
+          // dragging-term: only a terminal can be handed to the Agents panel.
+          document.body.classList.add("dragging-pane", "dragging-term");
           ghost = document.createElement("div");
           ghost.className = "drag-ghost";
           ghostLabel = document.createElement("span");
@@ -750,6 +760,20 @@ export class PaneTerm {
         document.body.classList.toggle("dragging-context", ctxMode);
         ghost!.classList.toggle("context", ctxMode);
         ghostLabel!.textContent = ctxMode ? `Context: ${title}` : title;
+
+        const overZone = paneDropZoneAt(ev.clientX, ev.clientY, id);
+        if (overZone !== zone) {
+          zone?.setHover(null);
+          zone = overZone;
+          zone?.setHover(id);
+        }
+        if (zone) {
+          if (targetEl) setHint(targetEl, null);
+          targetEl = null;
+          region = null;
+          ghostLabel!.textContent = `Ask about: ${title}`;
+          return;
+        }
 
         // Skip external-window panes: their tree-move semantics (id swaps) don't
         // apply to a reparented HWND, and they have no PTY here to paste into.
