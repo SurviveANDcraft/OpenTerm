@@ -2202,6 +2202,211 @@ pub fn pane_last_session(pane_id: String, harness: String) -> Result<Option<Pane
         }))
 }
 
+// ===================================================================
+//  Last prompt (Agents panel)
+// ===================================================================
+
+/// The most recent thing the user actually typed to the agent in a pane — the
+/// "what did I ask it to do?" line on its card.
+#[derive(Clone, Debug, Serialize)]
+pub struct LastPrompt {
+    pub harness: String,
+    pub text: String,
+    /// Epoch ms of the message, when the transcript records one.
+    pub at: Option<i64>,
+}
+
+/// Prompts can be pasted walls of text; the card and the summariser only need
+/// the gist, and this keeps the IPC payload small.
+const LAST_PROMPT_MAX_CHARS: usize = 4000;
+
+/// How much of a transcript's end is scanned first. The last user message is
+/// almost always in the final few hundred KB; the full file is only read when
+/// a single huge turn pushes it further back.
+const TRANSCRIPT_TAIL_BYTES: u64 = 512 * 1024;
+
+/// Lines of a JSONL file, newest first, reading only its tail unless `full`.
+fn jsonl_lines_rev(path: &Path, full: bool) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = fs::File::open(path) else { return Vec::new() };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = if full { 0 } else { len.saturating_sub(TRANSCRIPT_TAIL_BYTES) };
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    if f.read_to_end(&mut buf).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    // Seeking lands mid-line; the first fragment isn't valid JSON anyway, but
+    // drop it so it can never half-match.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    lines.reverse();
+    lines
+}
+
+/// A Claude Code `user` record's typed text, or None for everything that
+/// shares the record type without being a prompt: tool results, meta
+/// injections, slash-command wrappers, sub-agent (sidechain) traffic.
+fn claude_user_text(v: &Value) -> Option<String> {
+    if v.get("type").and_then(Value::as_str) != Some("user")
+        || v.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || v.get("isSidechain").and_then(Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let content = v.get("message")?.get("content")?;
+    let text = match content {
+        Value::String(s) => s.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|p| p.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => return None,
+    };
+    let t = text.trim();
+    // `<command-name>`, `<local-command-stdout>`, `<system-reminder>`… are the
+    // CLI talking to itself, not the user.
+    if t.is_empty() || t.starts_with('<') || t.starts_with("[Request interrupted") {
+        return None;
+    }
+    Some(t.to_string())
+}
+
+fn claude_last_prompt(path: &Path) -> Option<(String, Option<i64>)> {
+    for full in [false, true] {
+        for line in jsonl_lines_rev(path, full) {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            if let Some(t) = claude_user_text(&v) {
+                let at = v.get("timestamp").and_then(Value::as_str).and_then(parse_iso_ms);
+                return Some((t, at));
+            }
+        }
+        if fs::metadata(path).map(|m| m.len()).unwrap_or(0) <= TRANSCRIPT_TAIL_BYTES {
+            break; // the tail pass already covered the whole file
+        }
+    }
+    None
+}
+
+/// Codex logs every submitted prompt as an `event_msg` of type `user_message`
+/// (the `response_item` user records also carry injected environment context,
+/// so they're the wrong thing to read).
+fn codex_last_prompt(path: &Path) -> Option<(String, Option<i64>)> {
+    for full in [false, true] {
+        for line in jsonl_lines_rev(path, full) {
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            if v.get("type").and_then(Value::as_str) != Some("event_msg") {
+                continue;
+            }
+            let p = &v["payload"];
+            if p.get("type").and_then(Value::as_str) != Some("user_message") {
+                continue;
+            }
+            let Some(t) = p.get("message").and_then(Value::as_str).map(str::trim) else { continue };
+            if t.is_empty() {
+                continue;
+            }
+            let at = v.get("timestamp").and_then(Value::as_str).and_then(parse_iso_ms);
+            return Some((t.to_string(), at));
+        }
+        if fs::metadata(path).map(|m| m.len()).unwrap_or(0) <= TRANSCRIPT_TAIL_BYTES {
+            break;
+        }
+    }
+    None
+}
+
+/// OpenCode keeps message metadata in `message` and the typed text in `part`.
+/// Best-effort: a schema change just yields None and the card falls back to
+/// inferring the task from the screen.
+fn opencode_last_prompt(session_id: &str) -> Option<(String, Option<i64>)> {
+    with_opencode_db(|c| {
+        let row: rusqlite::Result<(String, Option<i64>)> = c.query_row(
+            "select id, time_created from message \
+             where session_id = ?1 and json_extract(data, '$.role') = 'user' \
+             order by time_created desc limit 1",
+            [session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        );
+        let (message_id, at) = row.ok()?;
+        let mut stmt = c
+            .prepare("select data from part where message_id = ?1 order by time_created")
+            .ok()?;
+        let rows = stmt.query_map([&message_id], |r| r.get::<_, String>(0)).ok()?;
+        let text: Vec<String> = rows
+            .flatten()
+            .filter_map(|d| serde_json::from_str::<Value>(&d).ok())
+            .filter(|v| v.get("type").and_then(Value::as_str) == Some("text"))
+            .filter(|v| v.get("synthetic").and_then(Value::as_bool) != Some(true))
+            .filter_map(|v| v.get("text").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let text = text.join("\n").trim().to_string();
+        (!text.is_empty()).then_some((text, at))
+    })
+    .flatten()
+}
+
+fn cap_prompt(s: String) -> String {
+    if s.chars().count() <= LAST_PROMPT_MAX_CHARS {
+        return s;
+    }
+    s.chars().take(LAST_PROMPT_MAX_CHARS).collect::<String>() + "…"
+}
+
+/// The user's most recent prompt in whichever agent session this pane touched
+/// last. Tries sessions newest-first, so a pane whose latest session has no
+/// prompt yet (just launched) still reports the one before it.
+#[tauri::command(async)]
+pub fn pane_last_prompt(pane_id: String) -> Result<Option<LastPrompt>, String> {
+    let pane = {
+        let reg = registry().lock().unwrap();
+        reg.links.panes.get(&pane_id).cloned()
+    };
+    let Some(pane) = pane else { return Ok(None) };
+
+    let mut links: Vec<SessionLink> = pane.links.clone();
+    for h in ["codex", "opencode"] {
+        if let Some(l) = infer_resume_session(&pane, h) {
+            if !links.iter().any(|e| e.harness == l.harness && e.session_id == l.session_id) {
+                links.push(l);
+            }
+        }
+    }
+    links.sort_by_key(|l| Reverse(l.last_seen));
+
+    let mut claude_index: Option<HashMap<String, PathBuf>> = None;
+    let mut codex_index: Option<HashMap<String, (PathBuf, i64)>> = None;
+    for link in links.iter().take(4) {
+        let found = match link.harness.as_str() {
+            "claude-code" => claude_index
+                .get_or_insert_with(claude_transcript_index)
+                .get(&link.session_id)
+                .and_then(|p| claude_last_prompt(p)),
+            "codex" => codex_index
+                .get_or_insert_with(codex_session_index)
+                .get(&link.session_id)
+                .and_then(|(p, _)| codex_last_prompt(p)),
+            "opencode" => opencode_last_prompt(&link.session_id),
+            _ => None,
+        };
+        if let Some((text, at)) = found {
+            return Ok(Some(LastPrompt {
+                harness: link.harness.clone(),
+                text: cap_prompt(text),
+                at,
+            }));
+        }
+    }
+    Ok(None)
+}
+
 #[tauri::command]
 pub fn usage_pricing_path() -> Result<String, String> {
     pricing_path()
@@ -2723,3 +2928,65 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod last_prompt_tests {
+    use super::*;
+
+    fn user(content: Value) -> Value {
+        serde_json::json!({ "type": "user", "message": { "role": "user", "content": content } })
+    }
+
+    #[test]
+    fn claude_plain_and_block_prompts() {
+        assert_eq!(claude_user_text(&user("  fix the build  ".into())).as_deref(), Some("fix the build"));
+        let blocks = serde_json::json!([
+            { "type": "text", "text": "add tests" },
+            { "type": "image", "source": {} }
+        ]);
+        assert_eq!(claude_user_text(&user(blocks)).as_deref(), Some("add tests"));
+    }
+
+    #[test]
+    fn claude_skips_non_prompts() {
+        let tool_result = serde_json::json!([{ "type": "tool_result", "content": "ok" }]);
+        assert!(claude_user_text(&user(tool_result)).is_none());
+        assert!(claude_user_text(&user("<command-name>/model</command-name>".into())).is_none());
+        assert!(claude_user_text(&user("[Request interrupted by user]".into())).is_none());
+        let mut meta = user("injected".into());
+        meta["isMeta"] = true.into();
+        assert!(claude_user_text(&meta).is_none());
+        let mut side = user("sub-agent prompt".into());
+        side["isSidechain"] = true.into();
+        assert!(claude_user_text(&side).is_none());
+        let assistant = serde_json::json!({ "type": "assistant", "message": { "content": "hi" } });
+        assert!(claude_user_text(&assistant).is_none());
+    }
+
+    #[test]
+    fn last_prompt_reads_newest_from_file() {
+        let dir = std::env::temp_dir().join(format!("openterm-lp-{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let claude = dir.join("c.jsonl");
+        let lines = [
+            user("first task".into()).to_string(),
+            serde_json::json!({ "type": "assistant", "message": { "content": "done" } }).to_string(),
+            user("second task".into()).to_string(),
+            user(serde_json::json!([{ "type": "tool_result", "content": "x" }])).to_string(),
+        ];
+        fs::write(&claude, lines.join("\n")).unwrap();
+        assert_eq!(claude_last_prompt(&claude).map(|p| p.0).as_deref(), Some("second task"));
+
+        let codex = dir.join("x.jsonl");
+        let lines = [
+            serde_json::json!({ "type": "event_msg", "payload": { "type": "user_message", "message": "old" } }).to_string(),
+            serde_json::json!({ "type": "event_msg", "timestamp": "2026-09-29T10:00:00.000Z", "payload": { "type": "user_message", "message": "new one" } }).to_string(),
+            serde_json::json!({ "type": "event_msg", "payload": { "type": "token_count" } }).to_string(),
+        ];
+        fs::write(&codex, lines.join("\n")).unwrap();
+        let (text, at) = codex_last_prompt(&codex).unwrap();
+        assert_eq!(text, "new one");
+        assert!(at.is_some());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

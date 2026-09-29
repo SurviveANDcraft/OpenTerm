@@ -42,6 +42,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 // ScreenToClient is imported from Graphics::Gdi above.
 
+mod assistant;
 mod browser;
 mod dictation;
 mod git;
@@ -1739,6 +1740,10 @@ fn main() {
             usage::usage_pricing_path,
             usage::forget_pane_usage,
             usage::pane_last_session,
+            usage::pane_last_prompt,
+            assistant::assistant_chat,
+            assistant::assistant_cancel,
+            assistant::summarize_agent,
             usage::claude_usage_limit,
             usage::codex_usage_limit,
             usage::live_pane_harnesses,
