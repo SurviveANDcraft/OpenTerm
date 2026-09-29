@@ -453,7 +453,13 @@ fn find_webview_hwnd(
 /// file and returns both path and base64. Used by Alt+Shift+drag to hand a
 /// screenshot of the page to an AI agent terminal.
 #[tauri::command]
-pub fn capture_browser_pane(x: i32, y: i32, w: i32, h: i32) -> Result<CaptureResult, String> {
+pub fn capture_browser_pane(
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    save: Option<bool>,
+) -> Result<CaptureResult, String> {
     use windows::Win32::Foundation::{POINT, RECT};
     use windows::Win32::Graphics::Gdi::{
         ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
@@ -563,7 +569,10 @@ pub fn capture_browser_pane(x: i32, y: i32, w: i32, h: i32) -> Result<CaptureRes
                         rgba.push(px[2]);
                         rgba.push(px[1]);
                         rgba.push(px[0]);
-                        rgba.push(px[3]);
+                        // PrintWindow leaves alpha undefined (often 0); web
+                        // content is opaque, so force it rather than hand
+                        // out a transparent screenshot.
+                        rgba.push(255);
                     }
                 }
                 out = rgba;
@@ -585,15 +594,21 @@ pub fn capture_browser_pane(x: i32, y: i32, w: i32, h: i32) -> Result<CaptureRes
         img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .map_err(|e| e.to_string())?;
 
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "openterm-browser-{}.png",
-            chrono_millis()
-        ));
-        std::fs::write(&path, &png).map_err(|e| e.to_string())?;
+        // Transient snapshots (the fold animation) only need the pixels, so
+        // they skip the temp file instead of littering one per fold.
+        let path = if save.unwrap_or(true) {
+            let path = std::env::temp_dir().join(format!(
+                "openterm-browser-{}.png",
+                chrono_millis()
+            ));
+            std::fs::write(&path, &png).map_err(|e| e.to_string())?;
+            path.to_string_lossy().to_string()
+        } else {
+            String::new()
+        };
 
         Ok(CaptureResult {
-            path: path.to_string_lossy().to_string(),
+            path,
             base64_png: base64::engine::general_purpose::STANDARD.encode(&png),
         })
     }

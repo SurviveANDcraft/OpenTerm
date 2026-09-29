@@ -6,7 +6,9 @@ import {
   type Device,
   deviceById,
   deviceShim,
+  foldPartner,
   RESPONSIVE,
+  sameEngine,
   userAgentFor,
 } from "./devices";
 import { writePty } from "./pty";
@@ -54,8 +56,8 @@ interface CaptureResult {
   path: string;
   base64_png: string;
 }
-function captureBrowserPane(rect: PhysRect): Promise<CaptureResult> {
-  return invoke("capture_browser_pane", { ...rect });
+function captureBrowserPane(rect: PhysRect, save = true): Promise<CaptureResult> {
+  return invoke("capture_browser_pane", { ...rect, save });
 }
 
 export interface PhysRect {
@@ -123,6 +125,8 @@ const ICONS = {
   rotate:
     '<svg viewBox="0 0 14 14"><rect x="1.5" y="5" width="11" height="6" rx="1.2" fill="none" stroke="currentColor"/><path fill="none" stroke="currentColor" d="M4.6 3.2A4 4 0 0 1 10 2.2M4.4 1.6l.3 1.7 1.7-.4"/></svg>',
   caret: '<svg viewBox="0 0 14 14"><path fill="none" stroke="currentColor" d="m4.5 6 2.5 2.5L9.5 6"/></svg>',
+  hinge:
+    '<svg viewBox="0 0 14 14"><path fill="none" stroke="currentColor" d="M7 2.5 2.5 3.8v7.4L7 12.5l4.5-1.3V3.8L7 2.5Zm0 0v10"/></svg>',
 };
 
 /** "example.com" → "https://example.com". Anything that already has a scheme
@@ -154,6 +158,27 @@ function toPhys(r: DOMRect): PhysRect {
     h: Math.round(r.height * dpr),
   };
 }
+
+/** Bezel / top-strip thickness of a device frame, in device px. Shared by the
+ *  live frame and the fold animation so both land on the same pixels. */
+function frameMetrics(dev: Device): { bezel: number; head: number } {
+  const bezel = dev.frame === "tablet" ? 14 : dev.frame === "desktop" ? 7 : 11;
+  const head = dev.frame === "desktop" ? 7 : dev.cutout === "none" ? bezel + 8 : bezel + 9;
+  return { bezel, head };
+}
+
+interface StageFit {
+  /** Unscaled frame footprint (screen + bezel + head), as laid out. */
+  frameW: number;
+  frameH: number;
+  scale: number;
+  /** Top-left of the scaled frame inside the stage. */
+  x: number;
+  y: number;
+}
+
+const nextFrame = (): Promise<void> =>
+  new Promise((resolve) => requestAnimationFrame(() => resolve()));
 
 /** "iPhone 16 Pro Max" -> "16 Pro Max"; keeps the toolbar chip short. */
 function shortName(d: Device): string {
@@ -232,7 +257,16 @@ export class PaneBrowser {
   private deviceBtn: HTMLButtonElement;
   private deviceLabel: HTMLElement;
   private rotateBtn: HTMLButtonElement;
+  private foldBtn: HTMLButtonElement;
   private menu: HTMLElement | null = null;
+  /** Fold / unfold in progress (snapshot + hinge animation). */
+  private folding = false;
+  /** The native webview is held hidden while the DOM hinge animation plays. */
+  private foldHide = false;
+  private foldRig: HTMLElement | null = null;
+  private foldAnims: Animation[] = [];
+  /** Bumped to invalidate an in-flight fold (device change, dispose). */
+  private foldToken = 0;
   /** The in-flight create_browser_pane call, if any. create_browser_pane is
    *  async on the Rust side (webview creation can't happen synchronously —
    *  see wry#583), so a close that lands *during* creation can't destroy a
@@ -369,7 +403,17 @@ export class PaneBrowser {
       e.stopPropagation();
       this.setDevice(this.device, !this.landscape);
     });
-    toolbar.append(this.deviceBtn, this.rotateBtn);
+
+    // Book-style foldables (iPhone Duo, Galaxy Z Fold): fold / unfold.
+    this.foldBtn = document.createElement("button");
+    this.foldBtn.className = "browser-nav-btn browser-fold-btn";
+    this.foldBtn.innerHTML = ICONS.hinge;
+    this.foldBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    this.foldBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void this.toggleFold();
+    });
+    toolbar.append(this.deviceBtn, this.rotateBtn, this.foldBtn);
 
     this.urlInput = document.createElement("input");
     this.urlInput.className = "browser-url";
@@ -649,8 +693,7 @@ export class PaneBrowser {
     const land = this.landscape;
     const w = land ? dev.h : dev.w;
     const h = land ? dev.w : dev.h;
-    const bezel = dev.frame === "tablet" ? 14 : dev.frame === "desktop" ? 7 : 11;
-    const head = dev.frame === "desktop" ? 7 : dev.cutout === "none" ? bezel + 8 : bezel + 9;
+    const { bezel, head } = frameMetrics(dev);
 
     this.stage.classList.add("active");
     this.frame.classList.toggle("landscape", land);
@@ -664,18 +707,11 @@ export class PaneBrowser {
 
     // Measured, not derived: offsetWidth/Height ignore the transform, so this
     // is the frame's true unscaled footprint (screen + bezel + head).
-    const host = this.host.getBoundingClientRect();
-    const frameW = this.frame.offsetWidth || w + bezel * 2;
-    const frameH = this.frame.offsetHeight || h + bezel * 2;
-    const availW = Math.max(80, host.width - 24);
-    const availH = Math.max(80, host.height - 24);
-    const s = Math.min(1, availW / frameW, availH / frameH);
-    this.scale = Math.max(0.25, Math.round(s * 1000) / 1000);
-    // Centred by hand: an oversized flex/grid item gets clamped to the start
-    // edge (its layout box is the *unscaled* size), which threw the frame —
-    // and the webview glued to it — off the bottom-right of the pane.
-    const x = Math.max(0, Math.round((host.width - frameW * this.scale) / 2));
-    const y = Math.max(0, Math.round((host.height - frameH * this.scale) / 2));
+    const { scale, x, y } = this.fitFrame(
+      this.frame.offsetWidth || w + bezel * 2,
+      this.frame.offsetHeight || h + bezel * 2
+    );
+    this.scale = scale;
     this.frame.style.transform =
       "translate(" + x + "px, " + y + "px) scale(" + this.scale + ")";
     this.deviceLabel.dataset.dims =
@@ -683,8 +719,42 @@ export class PaneBrowser {
     this.syncDeviceUi();
   }
 
+  /** Scale + position that fit a frame of this footprint into the pane. */
+  private fitFrame(frameW: number, frameH: number): StageFit {
+    const host = this.host.getBoundingClientRect();
+    const availW = Math.max(80, host.width - 24);
+    const availH = Math.max(80, host.height - 24);
+    const s = Math.min(1, availW / frameW, availH / frameH);
+    const scale = Math.max(0.25, Math.round(s * 1000) / 1000);
+    // Centred by hand: an oversized flex/grid item gets clamped to the start
+    // edge (its layout box is the *unscaled* size), which threw the frame —
+    // and the webview glued to it — off the bottom-right of the pane.
+    const x = Math.max(0, Math.round((host.width - frameW * scale) / 2));
+    const y = Math.max(0, Math.round((host.height - frameH * scale) / 2));
+    return { frameW, frameH, scale, x, y };
+  }
+
+  /** Where the live frame for `dev` would sit — derived rather than measured,
+   *  so it also works for the device we are about to switch to. */
+  private stageFitFor(dev: Device, land: boolean): StageFit {
+    const { bezel, head } = frameMetrics(dev);
+    const w = land ? dev.h : dev.w;
+    const h = land ? dev.w : dev.h;
+    return this.fitFrame(
+      land ? w + head + bezel : w + bezel * 2,
+      land ? h + bezel * 2 : h + head + bezel
+    );
+  }
+
   private syncDeviceUi(): void {
     const dev = this.device;
+    const partner = foldPartner(dev);
+    this.foldBtn.classList.toggle("hidden", !partner);
+    this.foldBtn.classList.toggle("on", !!dev?.fold && !dev.fold.closed);
+    this.foldBtn.disabled = this.folding;
+    this.foldBtn.title = partner
+      ? (dev?.fold?.closed ? "Unfold" : "Fold") + " - switch to " + partner.name
+      : "";
     this.deviceLabel.textContent = dev ? shortName(dev) : "Responsive";
     this.deviceBtn.classList.toggle("on", !!dev);
     this.rotateBtn.classList.toggle("hidden", !dev);
@@ -694,9 +764,17 @@ export class PaneBrowser {
       : "Emulate a device size (phone, tablet, foldable...)";
   }
 
-  /** Switching device rebuilds the child webview: the user-agent and the
-   *  devicePixelRatio/touch shim can only be applied at creation time. */
   setDevice(device: Device | null, landscape = this.landscape): void {
+    this.cancelFold();
+    this.applyDevice(device, landscape);
+  }
+
+  /** Switching to a device with a different user-agent or shim rebuilds the
+   *  child webview (both can only be applied at creation time). Otherwise —
+   *  rotating, folding, another iPhone — the live page is just resized, like
+   *  the real hardware, so it keeps its scroll position and state. */
+  private applyDevice(device: Device | null, landscape: boolean): void {
+    const prev = this.device;
     this.device = device;
     this.landscape = device ? landscape : false;
     this.handlers.onDeviceChanged(this.id, this.deviceId, this.landscape);
@@ -704,6 +782,10 @@ export class PaneBrowser {
     this.syncDeviceUi();
     if (!this.webviewCreated || !this.currentUrl) return;
     this.lastKey = "";
+    if (sameEngine(prev, device)) {
+      this.syncNow();
+      return;
+    }
     const selectedDevice = this.device;
     const selectedScale = this.scale;
     const p = this.queueCreate(() =>
@@ -734,6 +816,287 @@ export class PaneBrowser {
       });
   }
 
+  // ---- fold / unfold ----
+
+  /** Folds or unfolds a book-style foldable. The native webview can't be
+   *  transformed, so a DOM stand-in (seeded with a snapshot of the live page)
+   *  swings about the hinge while the webview is hidden; the webview then
+   *  reappears resized to the other screen. */
+  private async toggleFold(): Promise<void> {
+    const from = this.device;
+    const to = foldPartner(from);
+    if (!from?.fold || !to || this.folding) return;
+    const land = this.landscape;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || !this.stage.classList.contains("active") || this.host.offsetParent === null) {
+      this.applyDevice(to, land);
+      return;
+    }
+    const token = ++this.foldToken;
+    this.folding = true;
+    this.syncDeviceUi();
+
+    // Only a webview that is actually on screen yields a meaningful snapshot
+    // (picked from the device menu, it is still being re-shown right now).
+    await this.settlePosition();
+    if (token !== this.foldToken || this.disposed) return;
+    const shot =
+      this.webviewCreated && !this.creating && this.lastKey.startsWith("true:")
+        ? await this.snapshot()
+        : null;
+    if (token !== this.foldToken || this.disposed) return;
+
+    const closing = !from.fold.closed;
+    const open = closing ? from : to;
+    const shut = closing ? to : from;
+    const { rig, leaf, front, back, under, W, H, hinge, shutW } = this.buildFoldRig(
+      open,
+      shut,
+      closing ? shot : null,
+      closing ? null : shot,
+      land
+    );
+
+    // Rig coordinates are the open device, portrait, unscaled. Each state maps
+    // the visible device's centre onto where the real frame will sit.
+    const place = (fit: StageFit, cx: number, cy: number): string =>
+      `translate(${fit.x + (fit.frameW * fit.scale) / 2}px, ${fit.y + (fit.frameH * fit.scale) / 2}px) ` +
+      `scale(${fit.scale}) rotate(${land ? -90 : 0}deg) translate(${-cx}px, ${-cy}px)`;
+    const openT = place(this.stageFitFor(open, land), W / 2, H / 2);
+    const shutT = place(this.stageFitFor(shut, land), hinge + shutW / 2, H / 2);
+    const leafT = (deg: number) => `perspective(${Math.round(H * 2.4)}px) rotateY(${deg}deg)`;
+
+    rig.style.transform = closing ? openT : shutT;
+    leaf.style.transform = leafT(closing ? 0 : 180);
+    this.stage.appendChild(rig);
+    this.foldRig = rig;
+    this.stage.classList.add("folding");
+    this.foldHide = true;
+    this.lastKey = "";
+    this.syncNow();
+
+    // Keyframes are written open -> shut (leaf 0deg -> 180deg); unfolding
+    // plays the same track backwards so both directions share one easing.
+    const track = (kf: Keyframe[]): Keyframe[] =>
+      closing ? kf : kf.map((k) => ({ ...k, offset: 1 - (k.offset as number) })).reverse();
+    const timing: KeyframeAnimationOptions = {
+      duration: 720,
+      easing: "cubic-bezier(0.5, 0, 0.18, 1)",
+      fill: "forwards",
+    };
+    this.foldAnims = [
+      rig.animate(
+        track([
+          { transform: openT, offset: 0 },
+          { transform: shutT, offset: 1 },
+        ]),
+        timing
+      ),
+      leaf.animate(
+        track([
+          { transform: leafT(0), offset: 0 },
+          { transform: leafT(180), offset: 1 },
+        ]),
+        timing
+      ),
+      // Light falls off as each face turns edge-on to the viewer.
+      front.animate(
+        track([
+          { opacity: 0, offset: 0 },
+          { opacity: 0.55, offset: 0.5 },
+          { opacity: 0.55, offset: 1 },
+        ]),
+        timing
+      ),
+      back.animate(
+        track([
+          { opacity: 0.55, offset: 0 },
+          { opacity: 0.55, offset: 0.5 },
+          { opacity: 0, offset: 1 },
+        ]),
+        timing
+      ),
+      // The half being covered falls into the leaf's shadow.
+      under.animate(
+        track([
+          { opacity: 0, offset: 0 },
+          { opacity: 0.7, offset: 1 },
+        ]),
+        timing
+      ),
+    ];
+    try {
+      await Promise.all(this.foldAnims.map((a) => a.finished));
+    } catch {
+      return; // cancelled
+    }
+    if (token !== this.foldToken || this.disposed) return;
+
+    // The rig now sits exactly where the new frame goes: bring the webview
+    // back at its new size and drop the stand-in once it has been placed.
+    this.foldHide = false;
+    this.applyDevice(to, land);
+    await this.settlePosition();
+    if (token !== this.foldToken || this.disposed) return;
+    this.cancelFold();
+  }
+
+  /** A snapshot of the page as currently shown, or null if unavailable. */
+  private async snapshot(): Promise<HTMLImageElement | null> {
+    let timer = 0;
+    try {
+      const shot = await Promise.race([
+        captureBrowserPane(this.viewRect(), false),
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error("timeout")), 700);
+        }),
+      ]);
+      const img = new Image();
+      img.src = "data:image/png;base64," + shot.base64_png;
+      await img.decode();
+      return img;
+    } catch {
+      return null;
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  /** Resolves once the webview has been created/positioned and painted. */
+  private async settlePosition(): Promise<void> {
+    if (this.creating) await this.creating.catch(() => {});
+    for (let i = 0; i < 60 && (this.positioning || this.pendingPosition); i++) await nextFrame();
+    await nextFrame();
+    await nextFrame();
+  }
+
+  /** Aborts or finishes a fold: removes the stand-in, un-hides the webview. */
+  private cancelFold(): void {
+    this.foldToken++;
+    for (const a of this.foldAnims) a.cancel();
+    this.foldAnims = [];
+    this.foldRig?.remove();
+    this.foldRig = null;
+    this.stage.classList.remove("folding");
+    const wasHidden = this.foldHide;
+    this.foldHide = false;
+    if (this.folding) {
+      this.folding = false;
+      this.syncDeviceUi();
+    }
+    if (wasHidden && !this.disposed) {
+      this.lastKey = "";
+      this.syncNow();
+    }
+  }
+
+  /** Builds the DOM stand-in for the fold, in the open device's portrait
+   *  coordinates: a static right half, and a leaf (the left half) hinged on
+   *  its right edge whose back carries the cover screen. Folded = leaf at
+   *  180deg, lying over the right half with the cover screen facing out. */
+  private buildFoldRig(
+    open: Device,
+    shut: Device,
+    openShot: HTMLImageElement | null,
+    shutShot: HTMLImageElement | null,
+    land: boolean
+  ) {
+    const mo = frameMetrics(open);
+    const ms = frameMetrics(shut);
+    const W = open.w + mo.bezel * 2;
+    const H = open.h + mo.head + mo.bezel;
+    const hinge = W / 2;
+    const shutW = shut.w + ms.bezel * 2;
+    const shutH = shut.h + ms.head + ms.bezel;
+    const rOpen = Math.round(open.radius / 2);
+    const rShut = Math.round(shut.radius / 2);
+    const px = (n: number) => n + "px";
+
+    const el = (cls: string, parent?: HTMLElement): HTMLElement => {
+      const e = document.createElement("div");
+      e.className = cls;
+      parent?.appendChild(e);
+      return e;
+    };
+    const box = (e: HTMLElement, x: number, y: number, w: number, h: number, radius: string) => {
+      e.style.left = px(x);
+      e.style.top = px(y);
+      e.style.width = px(w);
+      e.style.height = px(h);
+      e.style.borderRadius = radius;
+    };
+    /** Screen content: the snapshot (counter-rotated in landscape, since the
+     *  whole rig is turned -90deg) or a wallpaper. `offsetX` pans a half. */
+    const content = (
+      screen: HTMLElement,
+      shot: HTMLImageElement | null,
+      w: number,
+      h: number,
+      offsetX: number
+    ) => {
+      const canvas = el("fold-canvas" + (shot ? "" : " fold-wall"), screen);
+      box(canvas, offsetX, 0, w, h, "0");
+      if (!shot) return;
+      const img = shot.cloneNode() as HTMLImageElement;
+      img.className = "fold-snap";
+      img.draggable = false;
+      if (land) {
+        box(img, (w - h) / 2, (h - w) / 2, h, w, "0");
+        img.style.transform = "rotate(90deg)";
+      } else {
+        box(img, 0, 0, w, h, "0");
+      }
+      canvas.appendChild(img);
+    };
+    const cutout = (parent: HTMLElement, dev: Device, cx: number, head: number) => {
+      if (land || dev.cutout === "none") return;
+      const c = el("fold-cutout", parent);
+      c.dataset.cutout = dev.cutout;
+      c.style.left = px(cx);
+      c.style.top = px(head / 2 - 4.5);
+    };
+
+    const rig = el("fold-rig");
+    rig.style.width = px(W);
+    rig.style.height = px(H);
+    const R = rOpen + mo.bezel;
+
+    // Right half: never moves.
+    const right = el("fold-part", rig);
+    box(right, hinge, 0, W - hinge, H, `0 ${R}px ${R}px 0`);
+    const rightScreen = el("fold-screen", right);
+    box(rightScreen, 0, mo.head, open.w / 2, open.h, `0 ${rOpen}px ${rOpen}px 0`);
+    content(rightScreen, openShot, open.w, open.h, -open.w / 2);
+    cutout(right, open, open.w / 4, mo.head);
+    const under = el("fold-shade fold-shade-under", right);
+
+    // Left half: the leaf.
+    const leaf = el("fold-leaf", rig);
+    box(leaf, 0, 0, hinge, H, "0");
+    const frontFace = el("fold-part fold-face", leaf);
+    box(frontFace, 0, 0, hinge, H, `${R}px 0 0 ${R}px`);
+    const leftScreen = el("fold-screen", frontFace);
+    box(leftScreen, mo.bezel, mo.head, open.w / 2, open.h, `${rOpen}px 0 0 ${rOpen}px`);
+    content(leftScreen, openShot, open.w, open.h, 0);
+    const front = el("fold-shade", frontFace);
+
+    // Back of the leaf: the cover screen, anchored at the hinge so that after
+    // the 180deg swing it lands exactly where the folded device's frame sits.
+    const backFace = el("fold-part fold-face fold-back", leaf);
+    box(backFace, hinge - shutW, (H - shutH) / 2, shutW, shutH, px(rShut + ms.bezel));
+    const coverScreen = el("fold-screen", backFace);
+    box(coverScreen, ms.bezel, ms.head, shut.w, shut.h, px(rShut));
+    content(coverScreen, shutShot, shut.w, shut.h, 0);
+    cutout(backFace, shut, shutW / 2, ms.head);
+    if (!land) {
+      el("fold-button fold-button-l", backFace);
+      el("fold-button fold-button-r", backFace);
+    }
+    const back = el("fold-shade", backFace);
+
+    return { rig, leaf, front, back, under, W, H, hinge, shutW };
+  }
+
   // ---- device menu ----
 
   private toggleMenu(): void {
@@ -757,7 +1120,9 @@ export class PaneBrowser {
       row.addEventListener("click", (e) => {
         e.stopPropagation();
         this.closeMenu();
-        this.setDevice(dev);
+        // Picking the other half of the current foldable folds it for real.
+        if (dev && dev === foldPartner(this.device)) void this.toggleFold();
+        else this.setDevice(dev);
       });
       menu.appendChild(row);
     };
@@ -845,6 +1210,7 @@ export class PaneBrowser {
     const visible =
       !overlaysOpen &&
       !hiddenForDrag &&
+      !this.foldHide &&
       !this.menu &&
       this.el.closest(".session-view.active") !== null &&
       this.host.offsetParent !== null &&
@@ -923,6 +1289,7 @@ export class PaneBrowser {
   dispose(): void {
     if (this.disposed) return;
     this.closeMenu();
+    this.cancelFold();
     this.disposed = true;
     if (this.syncRaf !== null) window.cancelAnimationFrame(this.syncRaf);
     this.pendingPosition = null;

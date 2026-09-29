@@ -25,6 +25,9 @@ export interface Device {
   cutout: Cutout;
   /** Physical screen corner radius, in device px — drives the frame's rounding. */
   radius: number;
+  /** Book-style foldables: the preset for the other half of the hinge (cover
+   *  screen <-> inner screen) and whether this one is the folded state. */
+  fold?: { pair: string; closed: boolean };
 }
 
 const IOS = "18_5";
@@ -85,6 +88,10 @@ export const RESPONSIVE: Device = {
  *  hardware itself, not the marketing pixel counts. */
 export const DEVICES: Device[] = [
   // ---- iPhone ----
+  // iPhone Duo (Sept 2026): 5.4" 1398x2034 cover screen and 7.6" 2670x1878
+  // inner screen (wider than tall when open), both rendered at @3x.
+  d("iphone-duo", "iPhone Duo · folded", "iPhone", 466, 678, 3, "ios-phone", "phone", "island", 55, fold("iphone-duo-open", true)),
+  d("iphone-duo-open", "iPhone Duo · unfolded", "iPhone", 890, 626, 3, "ios-phone", "fold", "island", 55, fold("iphone-duo", false)),
   d("iphone-16-pro-max", "iPhone 16 Pro Max", "iPhone", 440, 956, 3, "ios-phone", "phone", "island", 55),
   d("iphone-16-pro", "iPhone 16 Pro", "iPhone", 402, 874, 3, "ios-phone", "phone", "island", 55),
   d("iphone-16-plus", "iPhone 16 Plus", "iPhone", 430, 932, 3, "ios-phone", "phone", "island", 55),
@@ -102,10 +109,10 @@ export const DEVICES: Device[] = [
   d("galaxy-a54", "Galaxy A54", "Android phone", 360, 800, 3, "android-phone", "phone", "punch", 28),
   d("xiaomi-13", "Xiaomi 13", "Android phone", 393, 873, 2.75, "android-phone", "phone", "punch", 34),
   // ---- Foldables ----
-  d("zfold6-cover", "Galaxy Z Fold 6 · cover", "Foldable", 360, 892, 2.63, "android-phone", "phone", "punch", 30),
-  d("zfold6-open", "Galaxy Z Fold 6 · unfolded", "Foldable", 690, 850, 2.63, "android-tablet", "fold", "punch", 24),
-  d("zfold5-cover", "Galaxy Z Fold 5 · cover", "Foldable", 344, 882, 2.63, "android-phone", "phone", "punch", 30),
-  d("zfold5-open", "Galaxy Z Fold 5 · unfolded", "Foldable", 673, 841, 2.63, "android-tablet", "fold", "punch", 24),
+  d("zfold6-cover", "Galaxy Z Fold 6 · cover", "Foldable", 360, 892, 2.63, "android-phone", "phone", "punch", 30, fold("zfold6-open", true)),
+  d("zfold6-open", "Galaxy Z Fold 6 · unfolded", "Foldable", 690, 850, 2.63, "android-tablet", "fold", "punch", 24, fold("zfold6-cover", false)),
+  d("zfold5-cover", "Galaxy Z Fold 5 · cover", "Foldable", 344, 882, 2.63, "android-phone", "phone", "punch", 30, fold("zfold5-open", true)),
+  d("zfold5-open", "Galaxy Z Fold 5 · unfolded", "Foldable", 673, 841, 2.63, "android-tablet", "fold", "punch", 24, fold("zfold5-cover", false)),
   d("zflip6", "Galaxy Z Flip 6", "Foldable", 360, 880, 3.4, "android-phone", "phone", "punch", 36),
   d("pixel-fold", "Pixel Fold · unfolded", "Foldable", 701, 841, 2.63, "android-tablet", "fold", "punch", 24),
   // ---- Tablets ----
@@ -132,9 +139,27 @@ function d(
   ua: UaClass,
   frame: FrameKind,
   cutout: Cutout,
-  radius: number
+  radius: number,
+  foldInfo?: Device["fold"]
 ): Device {
-  return { id, name, group, w, h, dpr, ua, frame, cutout, radius };
+  return { id, name, group, w, h, dpr, ua, frame, cutout, radius, fold: foldInfo };
+}
+
+function fold(pair: string, closed: boolean): Device["fold"] {
+  return { pair, closed };
+}
+
+/** The other state of a book-style foldable (folded <-> unfolded), if any. */
+export function foldPartner(d: Device | null): Device | null {
+  return d?.fold ? deviceById(d.fold.pair) : null;
+}
+
+/** Same UA + shim means the running webview can simply be resized instead of
+ *  rebuilt — the page keeps its state, exactly like the real hardware. */
+export function sameEngine(a: Device | null, b: Device | null): boolean {
+  const ua = (d: Device | null) => (d ? userAgentFor(d) : null);
+  const shim = (d: Device | null) => (d ? deviceShim(d) : null);
+  return ua(a) === ua(b) && shim(a) === shim(b);
 }
 
 export function deviceById(id: string | undefined | null): Device | null {

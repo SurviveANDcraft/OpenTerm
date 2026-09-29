@@ -5465,6 +5465,181 @@ body.ext-dragging .drop-hint[class*="region-"] {
   display: none;
 }
 
+.browser-fold-btn.hidden {
+  display: none;
+}
+
+.browser-fold-btn.on {
+  color: var(--accent);
+}
+
+.browser-fold-btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Unfolded book-style foldables: the inner camera sits over the right half,
+   and the hinge shows as a seam through the top and bottom bezels. */
+.device-frame[data-frame="fold"] .device-cutout {
+  left: calc(var(--bezel) + (100% - 2 * var(--bezel)) * 0.75);
+}
+
+.device-frame[data-frame="fold"]::before,
+.device-frame[data-frame="fold"]::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 1px);
+  width: 2px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.08));
+}
+
+.device-frame[data-frame="fold"]::before {
+  top: 0;
+  height: var(--head);
+}
+
+.device-frame[data-frame="fold"]::after {
+  bottom: 0;
+  height: var(--bezel);
+}
+
+.device-frame[data-frame="fold"].landscape::before,
+.device-frame[data-frame="fold"].landscape::after {
+  display: block;
+  left: auto;
+  top: calc(50% - 1px);
+  width: auto;
+  height: 2px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.08));
+}
+
+.device-frame[data-frame="fold"].landscape::before {
+  left: 0;
+  width: var(--head);
+}
+
+.device-frame[data-frame="fold"].landscape::after {
+  right: 0;
+  bottom: auto;
+  width: var(--bezel);
+}
+
+/* ---- fold / unfold animation ----
+   A DOM stand-in for the device while the native webview is hidden: the
+   right half stays put, the left half (the "leaf") swings 180deg about the
+   hinge and carries the cover screen on its back. */
+.device-stage.folding .device-frame {
+  visibility: hidden;
+}
+
+.fold-rig {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.fold-part {
+  position: absolute;
+  background: linear-gradient(155deg, #4a4f57 0%, #23262b 26%, #14161a 60%, #2c3037 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    0 22px 50px rgba(0, 0, 0, 0.55);
+}
+
+.fold-leaf {
+  position: absolute;
+  transform-origin: 100% 50%;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.fold-face {
+  backface-visibility: hidden;
+}
+
+.fold-back {
+  transform: rotateY(180deg);
+}
+
+.fold-screen {
+  position: absolute;
+  overflow: hidden;
+  background: #000;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+.fold-canvas {
+  position: absolute;
+}
+
+.fold-snap {
+  position: absolute;
+  max-width: none;
+  user-select: none;
+}
+
+/* Stand-in for a screen we have no snapshot of yet (the page reflows onto
+   it the moment the fold completes). */
+.fold-wall {
+  background:
+    radial-gradient(90% 60% at 20% 15%, rgba(96, 129, 255, 0.55), transparent 60%),
+    radial-gradient(80% 60% at 85% 90%, rgba(150, 92, 255, 0.45), transparent 62%),
+    linear-gradient(165deg, #10173a 0%, #0b0d1f 55%, #05060c 100%);
+}
+
+.fold-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.35));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.fold-shade-under {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.4));
+}
+
+.fold-cutout {
+  position: absolute;
+  height: 9px;
+  border-radius: 5px;
+  transform: translateX(-50%);
+  background: #05070a;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.fold-cutout[data-cutout="island"] {
+  width: 62px;
+}
+
+.fold-cutout[data-cutout="punch"] {
+  width: 9px;
+}
+
+/* Mirrors the live phone frame's side buttons so nothing pops at hand-off. */
+.fold-button {
+  position: absolute;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #4b5058, #23262b);
+}
+
+.fold-button-l {
+  left: -3px;
+  top: 22%;
+  height: 13%;
+}
+
+.fold-button-r {
+  right: -3px;
+  top: 28%;
+  height: 10%;
+}
+
 /* Copy button carries a dot once new console/network data arrived since the
    last copy � a queue-badge-style "there's something here" signal. */
 .pane-btn.has-data {
