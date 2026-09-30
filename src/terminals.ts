@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { Terminal } from "@xterm/xterm";
 import { fitTerminalToViewport, syncTerminalViewport } from "./terminalViewport";
 import { copyText, pasteText } from "./clipboard";
@@ -37,14 +38,19 @@ import {
  *  the opener link severed. Exported so anything else that has to leave the app
  *  (the welcome's documentation link) hands off the same way. */
 export function openExternalUrl(uri: string): void {
-  const win = window.open();
-  if (!win) return;
-  try {
-    win.opener = null;
-  } catch {
-    /* already detached */
-  }
-  win.location.href = uri;
+  // The backend hands web links to the default browser; the webview's own
+  // window.open is silently dropped in some contexts, so it's only a fallback
+  // (e.g. a non-http link the backend refuses).
+  invoke("open_url", { url: uri }).catch(() => {
+    const win = window.open();
+    if (!win) return;
+    try {
+      win.opener = null;
+    } catch {
+      /* already detached */
+    }
+    win.location.href = uri;
+  });
 }
 
 /** Leading decorative glyphs in a reported terminal title — Claude Code's "✳",
@@ -269,6 +275,9 @@ export class PaneTerm {
   /** Raw-keystroke buffer for the line currently being typed, used to detect
    *  when the user launches a known AI agent CLI (see types.ts). */
   private inputLine = "";
+  /** Everything typed into the pane goes through here: keystrokes, pastes and
+   *  input the Agents assistant types on the user's behalf. */
+  private sendInput: (data: string) => void = () => {};
   /** Pane action buttons whose tooltip shows the action's live keybind — refreshed
    *  in applySettings() whenever the user rebinds a shortcut. */
   private actionButtons: { el: HTMLButtonElement; action: Action }[] = [];
@@ -576,11 +585,12 @@ export class PaneTerm {
       return true;
     });
 
-    this.term.onData((d) => {
+    this.sendInput = (d) => {
       void writePty(id, d);
       clearPaneAttention(id);
       this.trackInput(d, handlers);
-    });
+    };
+    this.term.onData(this.sendInput);
     onAttentionChange((paneId, waiting) => {
       if (paneId === id) this.el.classList.toggle("needs-attention", waiting);
     });
@@ -823,6 +833,21 @@ export class PaneTerm {
   async paste(): Promise<void> {
     const text = await pasteText();
     if (text) this.term.paste(text.replace(/\r\n/g, "\r"));
+  }
+
+  /** Types `text` as if the user had, then presses Enter a beat later (see
+   *  commandQueue's dispatchNext for why the Enter is separate). With `paste`
+   *  the text goes through term.paste(), so a program that enabled bracketed
+   *  paste receives it as one block and a multi-line prompt can't submit
+   *  early; without it the keystrokes are tracked like typing, so a launched
+   *  command is remembered for the pane. */
+  typeInput(text: string, paste: boolean): void {
+    if (this.disposed) return;
+    if (paste) this.term.paste(text);
+    else this.sendInput(text);
+    window.setTimeout(() => {
+      if (!this.disposed) this.sendInput("\r");
+    }, paste ? 150 : 80);
   }
 
   fitSoon(): void {

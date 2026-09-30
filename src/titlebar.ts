@@ -7,6 +7,20 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import appIcon from "../app-icon.png";
 import { store } from "./store";
+import { prettyChord } from "./keybinds";
+import sidebarIcon from "@phosphor-icons/core/regular/sidebar-simple.svg?raw";
+import sidebarOnIcon from "@phosphor-icons/core/fill/sidebar-simple-fill.svg?raw";
+
+/** Panel toggles in the title bar: the left sidebar on the left, the Agents
+ *  panel on the right (the same glyph mirrored), so each sits over its side. */
+export interface TitlebarActions {
+  onToggleSidebar(): void;
+  onToggleAgents(): void;
+}
+
+function panelIcon(on: boolean): string {
+  return (on ? sidebarOnIcon : sidebarIcon).replace("<svg ", '<svg width="15" height="15" aria-hidden="true" ');
+}
 
 const MIN = `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5.5h10" stroke="currentColor" stroke-width="1"/></svg>`;
 const MAX = `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" rx="1.2" fill="none" stroke="currentColor" stroke-width="1"/></svg>`;
@@ -25,7 +39,7 @@ function prettyPath(p: string): string {
   return "…\\" + parts.slice(-2).join("\\");
 }
 
-export function createTitlebar() {
+export function createTitlebar(actions: TitlebarActions) {
   const win = (() => {
     try {
       return getCurrentWindow();
@@ -39,11 +53,15 @@ export function createTitlebar() {
   el.setAttribute("data-tauri-drag-region", "");
   el.innerHTML = `
     <div class="tb-brand" data-tauri-drag-region><img src="${appIcon}" alt="" draggable="false" /></div>
+    <button class="tb-tool tb-toggle-sidebar" data-act="sidebar" tabindex="-1"></button>
     <div class="tb-title" data-tauri-drag-region>
       <span class="tb-dot"></span>
       <span class="tb-name"></span>
       <span class="tb-sep"></span>
       <span class="tb-path"></span>
+    </div>
+    <div class="tb-tools">
+      <button class="tb-tool tb-toggle-agents" data-act="agents" tabindex="-1"><i class="tb-alert"></i></button>
     </div>
     <div class="tb-controls">
       <button class="tb-btn" data-act="min" title="Minimize" tabindex="-1">${MIN}</button>
@@ -57,7 +75,41 @@ export function createTitlebar() {
   const pathEl = el.querySelector<HTMLElement>(".tb-path")!;
   const maxBtn = el.querySelector<HTMLElement>('[data-act="max"]')!;
 
+  const sidebarBtn = el.querySelector<HTMLElement>(".tb-toggle-sidebar")!;
+  const agentsBtn = el.querySelector<HTMLElement>(".tb-toggle-agents")!;
+  const agentsAlert = agentsBtn.querySelector<HTMLElement>(".tb-alert")!;
+  const appEl = document.querySelector<HTMLElement>(".app");
+
+  /** Mirrors the panels' real state off the app root's classes, so the
+   *  buttons stay right however a panel was toggled (shortcut, its own close
+   *  button, restored at boot). */
+  function syncToggles(): void {
+    const sidebarOn = !appEl?.classList.contains("sidebar-hidden");
+    const agentsOn = !!appEl?.classList.contains("agents-open");
+    const kb = store.state.settings.keybinds;
+    for (const [btn, on, label, chord] of [
+      [sidebarBtn, sidebarOn, "sidebar", kb.toggleSidebar],
+      [agentsBtn, agentsOn, "Agents panel", kb.toggleAgents],
+    ] as const) {
+      btn.classList.toggle("on", on);
+      const glyph = panelIcon(on);
+      if (btn.dataset.on !== String(on)) {
+        btn.querySelector("svg")?.remove();
+        btn.insertAdjacentHTML("afterbegin", glyph);
+        btn.dataset.on = String(on);
+      }
+      btn.title = `${on ? "Hide" : "Show"} ${label}${chord ? ` (${prettyChord(chord)})` : ""}`;
+    }
+  }
+  if (appEl) new MutationObserver(syncToggles).observe(appEl, { attributes: true, attributeFilter: ["class"] });
+
   el.addEventListener("click", (e) => {
+    const tool = (e.target as HTMLElement).closest<HTMLElement>(".tb-tool");
+    if (tool) {
+      if (tool.dataset.act === "sidebar") actions.onToggleSidebar();
+      else actions.onToggleAgents();
+      return;
+    }
     const btn = (e.target as HTMLElement).closest<HTMLElement>(".tb-btn");
     if (!btn || !win) return;
     const act = btn.dataset.act;
@@ -101,6 +153,15 @@ export function createTitlebar() {
     void win.onFocusChanged(({ payload }) => el.classList.toggle("blurred", !payload));
   }
   refresh();
+  syncToggles();
 
-  return { el, refresh };
+  return {
+    el,
+    refresh,
+    /** Amber dot on the Agents toggle while any agent is waiting on the user. */
+    setAgentsAlert(on: boolean): void {
+      agentsAlert.classList.toggle("on", on);
+    },
+    syncToggles,
+  };
 }

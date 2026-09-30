@@ -1126,6 +1126,16 @@ function liveSubagentCount(id: string, claims: SubagentClaim[], now: number): nu
 
 window.setInterval(pollWorking, WORKING_POLL_MS);
 
+/** The attention chime for other features (the assistant's approval cards),
+ *  sharing the cooldown so two alerts at once don't double up. Callers check
+ *  their own setting. */
+export function playAttentionChime(): void {
+  const now = Date.now();
+  if (now - lastSoundAt < SOUND_COOLDOWN_MS) return;
+  lastSoundAt = now;
+  void invoke("play_attention_sound", { path: store.state.settings.soundPath });
+}
+
 function playChime(): void {
   if (!store.state.settings.soundNotifications) return;
   const now = Date.now();

@@ -12,7 +12,8 @@
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "start": "cmd /c start \"\" \"src-tauri\\target\\release\\openterm.exe\"",
     "release": "node scripts/release.mjs",
-    "test:md": "node --experimental-strip-types scripts/md-roundtrip-test.mjs"
+    "test:md": "node --experimental-strip-types scripts/md-roundtrip-test.mjs",
+    "test:risk": "node --experimental-strip-types scripts/action-risk-test.mjs"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",

@@ -18,6 +18,21 @@ import warning from "@phosphor-icons/core/fill/warning-circle-fill.svg?raw";
 import bell from "@phosphor-icons/core/fill/bell-simple-ringing-fill.svg?raw";
 import arrowUpRight from "@phosphor-icons/core/regular/arrow-up-right.svg?raw";
 import check from "@phosphor-icons/core/bold/check-bold.svg?raw";
+import handPointing from "@phosphor-icons/core/regular/hand-pointing.svg?raw";
+import lightning from "@phosphor-icons/core/regular/lightning.svg?raw";
+import lock from "@phosphor-icons/core/regular/lock-simple.svg?raw";
+import shieldWarning from "@phosphor-icons/core/regular/shield-warning.svg?raw";
+import prohibit from "@phosphor-icons/core/regular/prohibit.svg?raw";
+import plusSquare from "@phosphor-icons/core/regular/plus-square.svg?raw";
+import split from "@phosphor-icons/core/regular/square-split-horizontal.svg?raw";
+import xSquare from "@phosphor-icons/core/regular/x-square.svg?raw";
+import crosshair from "@phosphor-icons/core/regular/crosshair.svg?raw";
+import resize from "@phosphor-icons/core/regular/arrows-out-line-horizontal.svg?raw";
+import cornersOut from "@phosphor-icons/core/regular/corners-out.svg?raw";
+import fold from "@phosphor-icons/core/regular/caret-line-down.svg?raw";
+import pencil from "@phosphor-icons/core/regular/pencil-simple.svg?raw";
+import play from "@phosphor-icons/core/regular/play.svg?raw";
+import paperPlane from "@phosphor-icons/core/regular/paper-plane-tilt.svg?raw";
 
 const RAW = {
   x,
@@ -36,6 +51,21 @@ const RAW = {
   bell,
   arrowUpRight,
   check,
+  handPointing,
+  lightning,
+  lock,
+  shieldWarning,
+  prohibit,
+  plusSquare,
+  split,
+  xSquare,
+  crosshair,
+  resize,
+  cornersOut,
+  fold,
+  pencil,
+  play,
+  paperPlane,
 };
 
 export type IconName = keyof typeof RAW;

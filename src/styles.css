@@ -225,8 +225,12 @@ textarea:focus {
   transition: margin-left 160ms var(--ease-out);
 }
 
+/* Hidden, the card's footprint must be exactly zero: this margin *replaces*
+   the 10px gutter margin, so it cancels the width alone. Any more and the
+   session area slides under the window edge and loses its own gutter. */
 .app.sidebar-hidden .sidebar {
-  margin-left: calc(-1 * var(--sidebar-width) - 12px);
+  margin-left: calc(-1 * var(--sidebar-width));
+  box-shadow: none; /* it now rests flush on the window edge */
 }
 
 .app.sidebar-hidden .sidebar-resizer {
@@ -6246,8 +6250,82 @@ body.dragging-file-dock {
   text-overflow: ellipsis;
 }
 
-.tb-controls {
+/* Panel toggles: quieter and smaller than the window buttons, so the chrome
+   still reads as chrome. Lit (filled glyph, full text colour) while open. */
+.tb-tools {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-right: 6px;
+}
+
+.tb-tool {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-faint);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.tb-tool:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.tb-tool:active {
+  transform: scale(0.94);
+}
+
+.tb-tool:focus-visible {
+  box-shadow: none;
+}
+
+.tb-tool.on {
+  color: var(--text-dim);
+}
+
+.tb-tool.on:hover {
+  color: var(--text);
+}
+
+.tb-toggle-sidebar {
+  margin-left: -4px;
+}
+
+/* One glyph, mirrored: the filled half is the panel's own side. */
+.tb-toggle-agents svg {
+  transform: scaleX(-1);
+}
+
+.tb-alert {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-wait);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 4.5%, var(--bg-sidebar));
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity var(--t-fast), transform var(--t-med);
+}
+
+.tb-alert.on {
+  opacity: 1;
+  transform: none;
+}
+
+.titlebar.blurred .tb-tool {
+  opacity: 0.55;
+}
+
+.tb-controls {
   display: flex;
   height: 100%;
   flex: none;

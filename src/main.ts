@@ -163,7 +163,10 @@ const AGENT_INSTALLERS: Record<string, { provider: string; command: string }> = 
 const root = document.getElementById("app")!;
 root.className = "app";
 
-const titlebar = createTitlebar();
+const titlebar = createTitlebar({
+  onToggleSidebar: () => runAction("toggleSidebar"),
+  onToggleAgents: () => agentsPanel.toggle(),
+});
 
 const appBody = document.createElement("div");
 appBody.className = "app-body";
@@ -218,6 +221,7 @@ const delegationWatchers = new Map<string, { paneId: string; fn: () => void }>()
 function updateChrome(): void {
   sidebar.update(settingsOpen, attentionSessions, sessionSubagents);
   titlebar.refresh();
+  titlebar.setAgentsAlert([...attentionSessions.values()].some((st) => st === "waiting" || st === "error"));
 }
 
 function activeSession(): Session | undefined {
@@ -1830,9 +1834,10 @@ function updateEmptyState(): void {
  *  chat. Consumed (and cleared) by the replay in `rerender`. */
 const freshAgentPanes = new Set<string>();
 
-function splitPane(paneId: string, dir: Dir, duplicate = false): void {
+/** Returns the new pane's id, or null when `paneId` isn't in any session. */
+function splitPane(paneId: string, dir: Dir, duplicate = false): string | null {
   const session = sessionOfPane(paneId);
-  if (!session) return;
+  if (!session) return null;
   const newId = uid();
   createPaneTerm(newId);
   session.tree = splitLeaf(session.tree, paneId, dir, newId);
@@ -1841,6 +1846,7 @@ function splitPane(paneId: string, dir: Dir, duplicate = false): void {
   rerender(session);
   requestAnimationFrame(() => focusPane(newId));
   store.save(true);
+  return newId;
 }
 
 /** Alt+split: make the freshly inserted leaf a copy of the pane it split off
@@ -2098,13 +2104,19 @@ function resizeFocused(dir: Dir, delta: number): void {
   const session = activeSession();
   if (!session) return;
   const id = focusedPane.get(session.id);
-  if (!id) return;
-  if (resizeLeaf(session.tree, id, dir, delta)) {
-    const rootEl = viewOf(session).firstElementChild as HTMLElement | null;
-    if (rootEl) syncSizes(session.tree, rootEl);
-    fitSessionSoon(session);
-    store.save();
-  }
+  if (id) resizePaneBy(id, dir, delta);
+}
+
+/** Grows (positive `delta`) or shrinks a pane along `dir`; false when there's
+ *  no neighbour that way or either side would drop below its minimum. */
+function resizePaneBy(id: string, dir: Dir, delta: number): boolean {
+  const session = sessionOfPane(id);
+  if (!session || !resizeLeaf(session.tree, id, dir, delta)) return false;
+  const rootEl = viewOf(session).firstElementChild as HTMLElement | null;
+  if (rootEl) syncSizes(session.tree, rootEl);
+  fitSessionSoon(session);
+  store.save();
+  return true;
 }
 
 /** How long a fold/unfold takes; matches the `.session-view.folding` transition. */
@@ -2821,7 +2833,8 @@ async function runInNewTerminal(session: Session, command: string): Promise<void
   if (!term) return;
   await term.ensureSpawned(store.state.settings.shell, session.cwd ?? null, null);
   await new Promise((r) => setTimeout(r, 500));
-  if (panes.has(newId)) void writePty(newId, `${command}`);
+  if (panes.has(newId)) void writePty(newId, `${command}
+`);
   store.save(true);
 }
 
@@ -2862,6 +2875,38 @@ const agentsPanel = createAgentsPanel({
   focusWorkspace: () => {
     const s = activeSession();
     focusPane(s ? focusedPane.get(s.id) : undefined);
+  },
+  actions: {
+    splitPane: (paneId, dir) => splitPane(paneId, dir),
+    openTerminal: (sessionId, dir) => {
+      const s = store.state.sessions.find((x) => x.id === sessionId);
+      if (!s) return null;
+      if (store.state.activeSessionId !== s.id) setActiveSession(s.id);
+      const anchorId = focusedPane.get(s.id) ?? collectLeaves(s.tree)[0];
+      return anchorId ? splitPane(anchorId, dir) : null;
+    },
+    closePane: async (paneId) => {
+      await closePane(paneId);
+      return !sessionOfPane(paneId);
+    },
+    focusPane: (paneId) => {
+      const s = sessionOfPane(paneId);
+      if (!s) return;
+      if (store.state.activeSessionId !== s.id) setActiveSession(s.id);
+      requestAnimationFrame(() => focusPane(paneId));
+    },
+    resizePane: resizePaneBy,
+    paneLayout: (paneId) => {
+      const s = sessionOfPane(paneId);
+      const leaf = s ? findLeaf(s.tree, paneId) : undefined;
+      return s && leaf ? { zoomed: s.zoomed === paneId, folded: !!leaf.folded } : null;
+    },
+    toggleZoom: zoomPaneById,
+    toggleFold: foldPaneById,
+    renamePane: (paneId, name) => {
+      panes.get(paneId)?.setCustomName(name);
+      renamePane(paneId, name);
+    },
   },
 });
 

@@ -219,6 +219,24 @@ export const TOOL_DEFS = [
   {
     type: "function",
     function: {
+      name: "list_processes",
+      description:
+        "List running processes on this PC (like tasklist), each tagged with the terminal it runs under. Use for any 'is X running?' question instead of typing commands.",
+      parameters: {
+        type: "object",
+        properties: {
+          names: {
+            type: "array",
+            items: { type: "string" },
+            description: "Substrings of image names, e.g. [\"node\", \"cargo\"]. Empty = all.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "read_terminal",
       description:
         "Read a terminal's recent output (cleaned). Use for specifics the snapshot doesn't give. Ask for the fewest lines that answer the question.",
@@ -371,6 +389,46 @@ export async function runTool(
     return {
       result: clip(hits.length ? hits.join("\n") : "No terminal in scope mentions that."),
       label: `Searched for “${pattern}”`,
+      paneIds: touched,
+    };
+  }
+
+  if (name === "list_processes") {
+    const names = Array.isArray(args.names) ? args.names.map(String).filter((n) => n.trim()) : [];
+    const rows = await invoke<{ pid: number; ppid: number; name: string; paneId: string | null }[]>(
+      "list_processes",
+      { names }
+    ).catch(() => null);
+    if (!rows) return { result: "Error: couldn't read the process list.", label: "Listed processes", paneIds: [] };
+    // Group by image name: "node.exe x7" reads better (and costs less) than
+    // seven rows, and the pane tags are what actually answer "where".
+    const byName = new Map<string, { pids: number[]; panes: Set<string> }>();
+    for (const r of rows) {
+      const g = byName.get(r.name) ?? { pids: [], panes: new Set<string>() };
+      g.pids.push(r.pid);
+      if (r.paneId && inScope(r.paneId)) g.panes.add(r.paneId);
+      byName.set(r.name, g);
+    }
+    const lines = [...byName.entries()]
+      .sort((x, y) => y[1].pids.length - x[1].pids.length)
+      .slice(0, 60)
+      .map(([n, g]) => {
+        const where = [...g.panes].map((id) => {
+          const a = agentByPane(id);
+          return a ? `${a.ref} "${a.title}"` : null;
+        }).filter(Boolean);
+        return `${n} x${g.pids.length} (pids ${g.pids.slice(0, 6).join(", ")}${g.pids.length > 6 ? ", …" : ""})${
+          where.length ? `, under ${where.join(", ")}` : ", not under any terminal here"
+        }`;
+      });
+    const touched = [...new Set([...byName.values()].flatMap((g) => [...g.panes]))];
+    return {
+      result: clip(
+        lines.length
+          ? `${rows.length} matching process${rows.length === 1 ? "" : "es"}:\n${lines.join("\n")}`
+          : `No running process matches ${names.length ? names.join(", ") : "anything"}.`
+      ),
+      label: names.length ? `Checked processes: ${names.join(", ")}` : "Listed processes",
       paneIds: touched,
     };
   }

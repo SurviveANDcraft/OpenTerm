@@ -594,6 +594,20 @@ export interface Settings {
   /** Have an AI name each agent card's task and current state. Only runs while
    *  the panel is open and a key is set. */
   agentCardSummaries: boolean;
+  /** The assistant's mode (see agentsModes.ts). Falls back to "ask" whenever
+   *  the mode's own switch below is off. */
+  assistantMode: AssistantMode;
+  /** Unlocks Act mode: the assistant may propose actions, each approved by
+   *  the user before it runs. */
+  assistantAllowAct: boolean;
+  /** Unlocks Auto mode: actions run without asking, except risky ones. Only
+   *  honoured together with `assistantAllowAct`. */
+  assistantAllowAuto: boolean;
+  /** OpenRouter model slug for the Agents panel assistant. Empty uses the
+   *  built-in default (DeepSeek V4 Flash). */
+  assistantModel: string;
+  /** Chime when the assistant asks you to approve an action. */
+  assistantApprovalSound: boolean;
   /** Flash the taskbar icon when a pane needs attention (approval prompt or
    *  error), in addition to the sound and inbox item. */
   taskbarFlash: boolean;
@@ -608,6 +622,10 @@ export interface Settings {
    *  Settings → About & Data can clear it by replaying the welcome. */
   onboardedAt: number | null;
 }
+
+/** What the Agents panel assistant may do: read only, act with approval, or
+ *  act on its own. */
+export type AssistantMode = "ask" | "act" | "auto";
 
 export const SIDEBAR_WIDTH_MIN = 180;
 export const SIDEBAR_WIDTH_MAX = 420;
@@ -641,6 +659,13 @@ export const DEFAULT_SETTINGS: Settings = {
   // Unlike inbox naming this rides along with opening the panel: the cards
   // are the feature the user just opened, and nothing is sent while it's shut.
   agentCardSummaries: true,
+  // The assistant can only read until the user opts in to each mode that
+  // lets it act.
+  assistantMode: "ask",
+  assistantAllowAct: false,
+  assistantAllowAuto: false,
+  assistantModel: "",
+  assistantApprovalSound: true,
   taskbarFlash: true,
   inboxNotifications: {},
   keybinds: { ...DEFAULT_KEYBINDS },

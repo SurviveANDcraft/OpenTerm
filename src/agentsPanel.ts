@@ -1,5 +1,6 @@
-/** The Agents panel: a right-hand sidebar listing every agent, and a read-only
- *  assistant that answers questions about them.
+/** The Agents panel: a right-hand sidebar listing every agent, and an
+ *  assistant that answers questions about them and, in Act or Auto mode, acts
+ *  on them (every action it wants approved shows up as a card in the thread).
  *
  *  It sits in the layout (not over it), so the session area simply narrows
  *  while it's open: terminals refit, and embedded browsers never paint over
@@ -7,7 +8,8 @@
  *  assistant and the optional AI summaries use the OpenRouter key. */
 
 import { store } from "./store";
-import { panes } from "./terminals";
+import { playAttentionChime } from "./attention";
+import { openExternalUrl, panes } from "./terminals";
 import { markSvg, shellBrand, type PaneBrand } from "./paneIcons";
 import { registerPaneDropZone } from "./paneDropZones";
 import {
@@ -23,7 +25,9 @@ import {
   type AgentStatus,
   type Scope,
 } from "./agentsData";
-import { Conversation } from "./agentsAssistant";
+import { Conversation, type ActionStep } from "./agentsAssistant";
+import type { ActionHost, ActionPlan } from "./agentsActions";
+import { MODES, effectiveMode, isModeUnlocked, type ModeDef } from "./agentsModes";
 import {
   cardSummary,
   isSummarizing,
@@ -42,7 +46,11 @@ export interface AgentsPanelHost {
   onLayoutChange(): void;
   /** Give keyboard focus back to the workspace (Esc from the composer). */
   focusWorkspace(): void;
+  /** Pane operations the assistant's action tools run. */
+  actions: ActionHost;
 }
+
+const DOCS_URL = "https://openterm.app/documentation#agents-panel";
 
 /** List refresh while open. Status flags are in-memory reads, so this is
  *  cheap; rows whose markup didn't change aren't touched. */
@@ -60,8 +68,24 @@ const SUGGESTIONS = ["What's each agent doing?", "Who needs me?", "Anything fail
 const TOOL_ICON: Record<string, IconName> = {
   read_terminal: "terminal",
   search_terminals: "search",
+  list_processes: "search",
   agent_details: "info",
+  open_terminal: "plusSquare",
+  split_pane: "split",
+  close_pane: "xSquare",
+  focus_pane: "crosshair",
+  resize_pane: "resize",
+  zoom_pane: "cornersOut",
+  fold_pane: "fold",
+  rename_pane: "pencil",
+  run_command: "play",
+  prompt_agent: "paperPlane",
 };
+
+/** A step label, with `code` spans rendered as code. */
+function stepLabel(label: string): string {
+  return esc(label).replace(/`([^`]+)`/g, "<code>$1</code>");
+}
 
 function esc(s: string): string {
   return s.replace(
@@ -97,12 +121,27 @@ function mark(owner: string, brand: PaneBrand): string {
   return svg;
 }
 
+/** The sidebar's status dot, orbit and all, so a busy agent reads the same in
+ *  both places: green while the agent itself works, blue while sub-agents do. */
+function orbit(kind: "run" | "sub"): string {
+  return `<i class="ap-orbit ${kind}" aria-hidden="true"></i>`;
+}
+
+/** Sort rank: an idle parent with sub-agents in flight is busy, not idle. */
+function rank(a: AgentInfo): number {
+  return a.status === "idle" && a.subagents ? STATUS_ORDER.working : STATUS_ORDER[a.status];
+}
+
 function stateHtml(a: AgentInfo): string {
+  // Sub-agents keep running while the parent sits between turns, so they're
+  // shown whenever they exist, not only while the parent is "working".
+  if (a.subagents && a.status !== "waiting" && a.status !== "error")
+    return `<span class="ap-state s-sub" title="Sub-agents running">${orbit("sub")}${a.subagents} sub-agent${
+      a.subagents === 1 ? "" : "s"
+    }</span>`;
   switch (a.status) {
     case "working":
-      return `<span class="ap-state s-working">${icon("spinner", 11)}${coarseAgo(a.since)}${
-        a.subagents ? `<span class="ap-sub" title="Sub-agents running">+${a.subagents}</span>` : ""
-      }</span>`;
+      return `<span class="ap-state s-working">${orbit("run")}${coarseAgo(a.since)}</span>`;
     case "waiting":
       return `<span class="ap-state s-waiting">${icon("bell", 11)}Needs you</span>`;
     case "error":
@@ -199,6 +238,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
       </div>
       <div class="ap-sub-right">
         <span class="ap-summary"></span>
+        <span class="ap-spend"></span>
         <button class="ap-icon-btn ap-resummarize" title="Refresh AI summaries">${icon("sparkle", 15)}</button>
         <button class="ap-icon-btn ap-new-chat" title="New chat">${icon("notePencil", 15)}</button>
       </div>
@@ -218,7 +258,15 @@ export function createAgentsPanel(host: AgentsPanelHost) {
               <button class="ap-send" title="Send (Enter)"></button>
             </div>
           </div>
-          <div class="ap-meta"><span class="ap-spend"></span></div>
+          <div class="ap-meta">
+            <div class="ap-mode">
+              <button class="ap-mode-btn" aria-haspopup="listbox" aria-expanded="false" title="Assistant mode">
+                <span class="ap-mode-icon"></span><span class="ap-mode-label"></span>${icon("caretDown", 11)}
+              </button>
+              <div class="ap-mode-menu" role="listbox" aria-label="Assistant mode" hidden></div>
+            </div>
+            <span class="ap-disclaimer"><span class="ap-disclaimer-text"></span><button class="ap-learn">Learn more</button></span>
+          </div>
         </footer>
       </section>
     </div>
@@ -248,6 +296,12 @@ export function createAgentsPanel(host: AgentsPanelHost) {
   const spendEl = $(".ap-spend");
   const dropLabel = $(".ap-drop-label");
   const resummarizeBtn = $<HTMLButtonElement>(".ap-resummarize");
+  const modeBtn = $<HTMLButtonElement>(".ap-mode-btn");
+  const modeMenu = $(".ap-mode-menu");
+  const modeIcon = $(".ap-mode-icon");
+  const modeLabel = $(".ap-mode-label");
+  const disclaimer = $(".ap-disclaimer");
+  const disclaimerText = $(".ap-disclaimer-text");
 
   let open = false;
   let view: "agents" | "chat" = "agents";
@@ -377,15 +431,110 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     updatePlaceholder();
   });
   document.addEventListener("pointerdown", (e) => {
-    if (!scopeMenu.hidden && !(e.target as HTMLElement).closest(".ap-scope")) setMenu(false);
+    const t = e.target as HTMLElement;
+    if (!scopeMenu.hidden && !t.closest(".ap-scope")) setMenu(false);
+    if (!modeMenu.hidden && !t.closest(".ap-mode")) setModeMenu(false);
   });
   el.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !scopeMenu.hidden) {
+    if (e.key !== "Escape") return;
+    if (!scopeMenu.hidden) {
       e.stopPropagation();
       setMenu(false);
       scopeBtn.focus();
+    } else if (!modeMenu.hidden) {
+      e.stopPropagation();
+      setModeMenu(false);
+      modeBtn.focus();
     }
   });
+
+  // ------------------------------------------------------------ mode
+
+  /** A locked mode the user picked, pending its switch in Settings. */
+  let wantedMode: ModeDef | null = null;
+
+  /** The mode in force. A mode whose switch was turned off in Settings falls
+   *  back to Ask, and that fallback is saved. */
+  function currentMode(): ModeDef {
+    const s = store.state.settings;
+    const m = effectiveMode(s);
+    if (s.assistantMode !== m.id) {
+      s.assistantMode = m.id;
+      store.save();
+    }
+    return m;
+  }
+
+  function renderMode(): void {
+    const m = currentMode();
+    el.dataset.mode = m.id;
+    modeIcon.innerHTML = icon(m.icon, 12);
+    modeLabel.textContent = m.label;
+    disclaimerText.textContent = m.disclaimer;
+    disclaimer.title = m.disclaimer;
+    if (!modeMenu.hidden) renderModeMenu();
+  }
+
+  function renderModeMenu(): void {
+    const s = store.state.settings;
+    const current = currentMode();
+    setHtml(
+      modeMenu,
+      MODES.map((m) => {
+        const unlocked = isModeUnlocked(m, s);
+        const on = m.id === current.id;
+        return `<button class="ap-mode-item${on ? " selected" : ""}${unlocked ? "" : " locked"}" role="option" aria-selected="${on}" data-mode="${m.id}"${
+          unlocked ? "" : ` title="Turn on ${esc(m.label)} mode in Settings, AI"`
+        }><span class="ap-mode-item-icon">${icon(m.icon, 14)}</span><span class="ap-mode-text"><span class="ap-mode-name">${esc(
+          m.label
+        )}</span><span class="ap-mode-hint">${esc(unlocked ? m.hint : "Enable in Settings")}</span></span><span class="ap-mode-end">${
+          unlocked ? icon("check", 11) : icon("lock", 12)
+        }</span></button>`;
+      }).join("")
+    );
+  }
+
+  function setModeMenu(openMenu: boolean): void {
+    modeMenu.hidden = !openMenu;
+    modeBtn.setAttribute("aria-expanded", String(openMenu));
+    modeBtn.classList.toggle("open", openMenu);
+    if (openMenu) {
+      renderModeMenu();
+      modeMenu.querySelector<HTMLElement>(".ap-mode-item.selected")?.focus();
+    }
+  }
+
+  modeBtn.addEventListener("click", () => setModeMenu(modeMenu.hidden));
+  modeMenu.addEventListener("click", (e) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>(".ap-mode-item");
+    const m = MODES.find((x) => x.id === t?.dataset.mode);
+    if (!m) return;
+    setModeMenu(false);
+    if (!isModeUnlocked(m, store.state.settings)) {
+      // Switched to as soon as Settings unlocks it (see refreshSettings).
+      wantedMode = m;
+      host.openAiSettings();
+      return;
+    }
+    wantedMode = null;
+    selectMode(m);
+    input.focus();
+  });
+
+  function selectMode(m: ModeDef): void {
+    store.state.settings.assistantMode = m.id;
+    store.save();
+    renderMode();
+    updatePlaceholder();
+  }
+  modeMenu.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const items = [...modeMenu.querySelectorAll<HTMLElement>(".ap-mode-item")];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+  });
+  $(".ap-learn").addEventListener("click", () => openExternalUrl(DOCS_URL));
 
   // ------------------------------------------------------------ views
 
@@ -448,10 +597,10 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     const all = listAgents(scope);
     const agents = all
       .filter((a) => a.brand)
-      .sort((x, y) => STATUS_ORDER[x.status] - STATUS_ORDER[y.status]);
+      .sort((x, y) => rank(x) - rank(y));
     const shells = all.filter((a) => !a.brand);
     const needYou = agents.filter((a) => a.status === "waiting" || a.status === "error").length;
-    const working = agents.filter((a) => a.status === "working").length;
+    const working = agents.filter((a) => rank(a) === STATUS_ORDER.working).length;
     setHtml(
       summaryEl,
       needYou
@@ -672,7 +821,8 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     }
     if (attached.length) {
       input.placeholder = attached.length === 1 ? "Ask about this terminal…" : `Ask about these ${attached.length} terminals…`;
-    } else if (scope === "all") input.placeholder = "Ask about your agents…";
+    } else if (currentMode().actions) input.placeholder = "Ask, or say what to do…";
+    else if (scope === "all") input.placeholder = "Ask about your agents…";
     else {
       const s = store.state.sessions.find((x) => x.id === scope);
       input.placeholder = `Ask about ${s?.name ?? "this session"}…`;
@@ -720,6 +870,114 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     spendEl.title = u.tokens ? `${u.tokens.toLocaleString()} tokens` : "";
   }
 
+  // ------------------------------------------------------------ approvals
+
+  /** Cards waiting for a decision, in the order they were shown. */
+  const pending = new Map<ActionPlan, { el: HTMLElement; settle(ok: boolean): void }>();
+  /** The step line each decided card collapsed into, so the action's outcome
+   *  lands in the same spot. */
+  const stepOf = new WeakMap<ActionPlan, HTMLElement>();
+
+  function cardHtml(plan: ActionPlan): string {
+    const risky = plan.risks.length > 0;
+    const body = plan.text
+      ? `<pre class="ap-card-text">${esc(plan.text)}</pre>`
+      : plan.detail
+        ? `<p class="ap-card-detail">${esc(plan.detail)}</p>`
+        : "";
+    return `
+      <div class="ap-card-head">
+        ${icon(TOOL_ICON[plan.tool] ?? "info", 13)}
+        <span class="ap-card-verb">${esc(plan.verb)}</span>
+        ${plan.target ? `<span class="ap-card-target" title="${esc(plan.target)}">${esc(plan.target)}</span>` : ""}
+        ${risky ? `<span class="ap-card-risk" title="Needs your approval in every mode">${icon("shieldWarning", 11)}Risky</span>` : ""}
+      </div>
+      ${body}
+      ${risky ? `<p class="ap-card-why">${esc(plan.risks.join(". "))}.</p>` : ""}
+      <div class="ap-card-actions">
+        <button class="ap-card-all" hidden></button>
+        <button class="ap-card-deny" title="Deny (Esc)">Deny</button>
+        <button class="ap-card-ok" title="Approve (Enter)">Approve</button>
+      </div>`;
+  }
+
+  /** Only while several cards wait does each offer "Approve all". */
+  function syncApproveAll(): void {
+    for (const { el: card } of pending.values()) {
+      const all = card.querySelector<HTMLButtonElement>(".ap-card-all")!;
+      all.hidden = pending.size < 2;
+      all.textContent = `Approve all ${pending.size}`;
+    }
+  }
+
+  function focusNextCard(): void {
+    const next = pending.values().next().value;
+    if (next) next.el.querySelector<HTMLElement>(".ap-card-ok")?.focus();
+    else if (el.contains(document.activeElement) || document.activeElement === document.body) input.focus();
+  }
+
+  function requestApproval(plan: ActionPlan, signal: AbortSignal, container: HTMLElement): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (signal.aborted) return resolve(false);
+      const card = document.createElement("div");
+      card.className = `ap-card${plan.risks.length ? " risky" : ""}`;
+      card.setAttribute("role", "group");
+      card.setAttribute("aria-label", `${plan.verb}${plan.target ? `, ${plan.target}` : ""}: approve or deny`);
+      card.innerHTML = cardHtml(plan);
+      container.append(card);
+      // Cards from one step arrive together; the shared cooldown keeps that
+      // to a single chime.
+      if (store.state.settings.assistantApprovalSound) playAttentionChime();
+
+      const onAbort = (): void => settle(false, true);
+      const settle = (ok: boolean, cancelled = false): void => {
+        if (!pending.has(plan)) return;
+        const hadFocus = card.contains(document.activeElement);
+        pending.delete(plan);
+        signal.removeEventListener("abort", onAbort);
+        // The card collapses into its step line; showAction fills in the outcome.
+        card.className = `ap-step${ok ? "" : " denied"}`;
+        card.removeAttribute("role");
+        card.removeAttribute("aria-label");
+        card.innerHTML = `${icon(ok ? (TOOL_ICON[plan.tool] ?? "info") : "prohibit", 12)}<span>${stepLabel(
+          cancelled ? `Cancelled: ${plan.verb.toLowerCase()}` : ok ? `${plan.verb}…` : plan.deniedLabel
+        )}</span>`;
+        stepOf.set(plan, card);
+        syncApproveAll();
+        if (hadFocus || !pending.size) focusNextCard();
+        resolve(ok);
+      };
+      pending.set(plan, { el: card, settle });
+      signal.addEventListener("abort", onAbort);
+      syncApproveAll();
+      scrollToEnd();
+      // Focus goes to the first card still waiting, not the newest.
+      if (pending.size === 1 || !thread.contains(document.activeElement)) focusNextCard();
+    });
+  }
+
+  function showAction(plan: ActionPlan | null, step: ActionStep, container: HTMLElement): void {
+    const glyph: IconName = step.outcome === "denied" ? "prohibit" : step.outcome === "failed" ? "warning" : (TOOL_ICON[step.tool] ?? "info");
+    const line = (plan && stepOf.get(plan)) || document.createElement("div");
+    line.className = `ap-step${step.outcome === "done" ? "" : ` ${step.outcome}`}`;
+    line.innerHTML = `${icon(glyph, 12)}<span>${stepLabel(step.label)}</span>`;
+    if (!line.isConnected) container.append(line);
+    scrollToEnd();
+  }
+
+  thread.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== "Escape") return;
+    const t = e.target as HTMLElement;
+    const card = t.closest<HTMLElement>(".ap-card");
+    const entry = card ? [...pending.values()].find((p) => p.el === card) : undefined;
+    if (!entry) return;
+    // Enter on Deny or "Approve all" does what that button says.
+    if (e.key === "Enter" && t.closest(".ap-card-deny, .ap-card-all")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    entry.settle(e.key === "Enter");
+  });
+
   async function send(text: string): Promise<void> {
     const q = text.trim();
     if (!q || conversation.running) return;
@@ -757,7 +1015,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     let latest = "";
     setRunning(true);
     try {
-      const res = await conversation.ask(q, sentAttached, scope, {
+      const res = await conversation.ask(q, sentAttached, scope, currentMode().id, host.actions, {
         onText: (t) => {
           latest = t;
           if (frame) return;
@@ -774,6 +1032,8 @@ export function createAgentsPanel(host: AgentsPanelHost) {
           steps.append(step);
           scrollToEnd();
         },
+        requestApproval: (plan, signal) => requestApproval(plan, signal, steps),
+        onAction: (plan, step) => showAction(plan, step, steps),
       });
       if (frame) cancelAnimationFrame(frame);
       answer.innerHTML = res.text
@@ -837,6 +1097,16 @@ export function createAgentsPanel(host: AgentsPanelHost) {
 
   thread.addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
+    const decision = t.closest<HTMLElement>(".ap-card-ok, .ap-card-deny, .ap-card-all");
+    if (decision) {
+      const card = decision.closest(".ap-card");
+      if (decision.classList.contains("ap-card-all")) {
+        for (const p of [...pending.values()]) p.settle(true);
+      } else {
+        [...pending.values()].find((p) => p.el === card)?.settle(decision.classList.contains("ap-card-ok"));
+      }
+      return;
+    }
     const ref = t.closest<HTMLElement>(".ap-ref");
     if (ref?.dataset.pane) {
       goTo(ref.dataset.pane);
@@ -875,6 +1145,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
   el.dataset.view = view;
   el.querySelector(`.ap-switch-btn[data-view="${view}"]`)?.classList.add("active");
   renderEmptyThread();
+  renderMode();
   updatePlaceholder();
   setRunning(false);
   attachedEl.hidden = true;
@@ -893,6 +1164,11 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     },
     /** Settings changed (API key added/removed, shortcut rebound…). */
     refreshSettings(): void {
+      if (wantedMode && isModeUnlocked(wantedMode, store.state.settings)) {
+        selectMode(wantedMode);
+        wantedMode = null;
+      }
+      renderMode();
       updatePlaceholder();
       if (!conversation.running && (thread.querySelector(".ap-welcome") || !thread.children.length)) renderEmptyThread();
       if (open) refreshSlow(false);

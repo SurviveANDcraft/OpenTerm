@@ -158,6 +158,12 @@ export function clearQueue(id: string): void {
 
 /** Record that a pane produced output. Called for every PTY chunk, so it stays
  *  a single map write — the readiness work happens on the poll timer instead. */
+/** Milliseconds since the pane last printed anything (Infinity if never). */
+export function msSinceOutput(id: string): number {
+  const at = lastOutputAt.get(id);
+  return at === undefined ? Infinity : Date.now() - at;
+}
+
 export function notifyPaneOutput(id: string): void {
   lastOutputAt.set(id, Date.now());
 }

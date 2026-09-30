@@ -2203,6 +2203,78 @@ pub fn pane_last_session(pane_id: String, harness: String) -> Result<Option<Pane
 }
 
 // ===================================================================
+//  Process list (Agents panel)
+// ===================================================================
+
+/// One running process, and the OpenTerm pane whose shell it runs under.
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessRow {
+    pub pid: u32,
+    pub ppid: u32,
+    pub name: String,
+    #[serde(rename = "paneId")]
+    pub pane_id: Option<String>,
+}
+
+/// Running processes whose image name contains any of `names` (all of them
+/// when `names` is empty), each tagged with the pane it belongs to. Lets the
+/// assistant answer "is node running?" without typing into a terminal.
+#[tauri::command(async)]
+pub fn list_processes(names: Vec<String>) -> Vec<ProcessRow> {
+    let procs = snapshot_processes();
+    let ptys: Vec<(String, u32)> = {
+        let reg = registry().lock().unwrap();
+        reg.ptys.iter().map(|(k, v)| (k.clone(), *v)).collect()
+    };
+    let mut owner: HashMap<u32, String> = HashMap::new();
+    for (pane_id, shell_pid) in &ptys {
+        owner.insert(*shell_pid, pane_id.clone());
+        for p in descendants(&procs, *shell_pid) {
+            owner.insert(p.pid, pane_id.clone());
+        }
+    }
+    let wanted: Vec<String> = names
+        .iter()
+        .map(|n| n.trim().to_lowercase())
+        .filter(|n| !n.is_empty())
+        .collect();
+    procs
+        .into_iter()
+        .filter(|p| wanted.is_empty() || wanted.iter().any(|w| p.name.contains(w.as_str())))
+        .map(|p| ProcessRow {
+            pane_id: owner.get(&p.pid).cloned(),
+            pid: p.pid,
+            ppid: p.ppid,
+            name: p.name,
+        })
+        .collect()
+}
+
+/// Console-host processes Windows attaches to a shell; they say nothing about
+/// whether a command is running.
+const CONSOLE_HOSTS: [&str; 2] = ["conhost.exe", "openconsole.exe"];
+
+/// Pane id → whether its shell is running nothing right now (no child process
+/// besides a console host). Unlike reading the prompt off the screen, this
+/// works for any prompt theme, and a dev server or a build keeps it busy.
+#[tauri::command(async)]
+pub fn idle_shell_panes() -> HashMap<String, bool> {
+    let procs = snapshot_processes();
+    let ptys: Vec<(String, u32)> = {
+        let reg = registry().lock().unwrap();
+        reg.ptys.iter().map(|(k, v)| (k.clone(), *v)).collect()
+    };
+    ptys.into_iter()
+        .map(|(pane_id, shell_pid)| {
+            let busy = descendants(&procs, shell_pid)
+                .iter()
+                .any(|p| !CONSOLE_HOSTS.contains(&p.name.as_str()));
+            (pane_id, !busy)
+        })
+        .collect()
+}
+
+// ===================================================================
 //  Last prompt (Agents panel)
 // ===================================================================
 

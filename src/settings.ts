@@ -1397,6 +1397,37 @@ export function createSettingsView(handlers: SettingsHandlers) {
       markDirty();
     });
 
+    // Each mode that lets the assistant act is its own opt-in. Auto builds on
+    // Act, so turning Act off takes Auto with it.
+    const allowAct = toggle(s.assistantAllowAct, (v) => {
+      s.assistantAllowAct = v;
+      if (!v) s.assistantAllowAuto = false;
+      markDirty();
+      render();
+    });
+    const allowAuto = toggle(s.assistantAllowAct && s.assistantAllowAuto, (v) => {
+      s.assistantAllowAuto = v;
+      markDirty();
+    });
+    allowAuto.disabled = !s.assistantAllowAct;
+    const autoField = field("Allow Auto mode", allowAuto, {
+      desc: s.assistantAllowAct
+        ? "The assistant acts without asking. Risky commands, closing busy terminals and prompts that ask an agent to do something risky still need your approval."
+        : "Needs Act mode first.",
+      keywords: "agents panel assistant auto mode actions autonomous",
+    });
+    autoField.classList.toggle("is-disabled", !s.assistantAllowAct);
+
+    const assistantModel = document.createElement("input");
+    assistantModel.type = "text";
+    assistantModel.value = s.assistantModel;
+    assistantModel.placeholder = "deepseek/deepseek-v4-flash";
+    assistantModel.spellcheck = false;
+    assistantModel.addEventListener("input", () => {
+      s.assistantModel = assistantModel.value.trim();
+      markDirty();
+    });
+
     cats.ai.push(
       section(
         "OpenRouter",
@@ -1420,6 +1451,15 @@ export function createSettingsView(handlers: SettingsHandlers) {
               ? "While the Agents panel is open, each agent gets a one-line name for its task and current state. Refreshes when an agent gets a new prompt or changes state."
               : "Needs an API key. Without one, the list shows the last prompt and screen line.",
             keywords: "agents panel cards summary sidebar assistant",
+          }),
+          field("Allow Act mode", allowAct, {
+            desc: "The Agents panel assistant can arrange panes, run commands in idle shells and prompt idle agents. You approve every action first.",
+            keywords: "agents panel assistant act mode actions approve",
+          }),
+          autoField,
+          field("Assistant model", assistantModel, {
+            desc: "Any OpenRouter model id. Leave empty for DeepSeek V4 Flash (cheap and fast). A stronger model follows multi-step Act and Auto requests more reliably, at a higher cost per question.",
+            keywords: "agents panel assistant model openrouter llm deepseek claude",
           }),
         ],
         { keywords: "openrouter ai api key" }
@@ -1472,6 +1512,11 @@ export function createSettingsView(handlers: SettingsHandlers) {
     });
     soundField.classList.toggle("is-disabled", !s.soundNotifications);
 
+    const approvalSound = toggle(s.assistantApprovalSound, (v) => {
+      s.assistantApprovalSound = v;
+      markDirty();
+    });
+
     const taskbarFlash = toggle(s.taskbarFlash, (v) => {
       s.taskbarFlash = v;
       markDirty();
@@ -1485,6 +1530,10 @@ export function createSettingsView(handlers: SettingsHandlers) {
           field("Play a sound", soundNotifications, { keywords: "audio chime alert" }),
           soundField,
           field("Flash taskbar icon", taskbarFlash, { keywords: "taskbar blink" }),
+          field("Chime when the assistant needs approval", approvalSound, {
+            desc: "Plays the sound above when the Agents panel asks you to approve an action.",
+            keywords: "agents panel assistant approve act auto chime sound",
+          }),
         ],
         { keywords: "attention alert" }
       )

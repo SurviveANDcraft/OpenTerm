@@ -87,6 +87,12 @@ pub async fn assistant_chat(
     request_id: String,
     messages: Value,
     tools: Value,
+    // "none" keeps the tool schemas in the request (so the prompt prefix and
+    // the model's picture of its tools stay the same) while forbidding a call.
+    // Dropping the tools instead makes DeepSeek write its call markup as text.
+    tool_choice: Option<String>,
+    // OpenRouter model slug; the built-in default when absent or blank.
+    model: Option<String>,
     on_event: Channel<AssistantEvent>,
 ) -> Result<AssistantTurn, String> {
     // A stale flag from a stop pressed after the previous turn finished must
@@ -99,7 +105,7 @@ pub async fn assistant_chat(
         .map_err(|e| e.to_string())?;
 
     let mut body = serde_json::json!({
-        "model": MODEL,
+        "model": model.as_deref().map(str::trim).filter(|m| !m.is_empty()).unwrap_or(MODEL),
         "stream": true,
         "max_tokens": MAX_REPLY_TOKENS,
         "temperature": 0.2,
@@ -108,6 +114,9 @@ pub async fn assistant_chat(
     });
     if tools.as_array().is_some_and(|t| !t.is_empty()) {
         body["tools"] = tools;
+        if let Some(choice) = tool_choice.filter(|c| !c.is_empty()) {
+            body["tool_choice"] = Value::String(choice);
+        }
     }
 
     let mut resp = client

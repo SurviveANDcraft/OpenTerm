@@ -879,6 +879,27 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Opens a web link in the user's default browser. The webview ignores
+/// `window.open`, so every external link (terminal output, docs links) comes
+/// through here. Only http(s) is accepted: anything else handed to the shell
+/// could launch a local program or file.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let lower = url.trim().to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return Err(format!("not a web link: {url}"));
+    }
+    let mut cmd = std::process::Command::new("rundll32");
+    cmd.args(["url.dll,FileProtocolHandler", url.trim()]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn rename_path(from: String, to: String) -> Result<(), String> {
     if std::path::Path::new(&to).exists() {
@@ -1716,6 +1737,7 @@ fn main() {
             read_file_base64,
             write_text_file,
             reveal_in_explorer,
+            open_url,
             rename_path,
             delete_path,
             play_attention_sound,
@@ -1742,6 +1764,8 @@ fn main() {
             usage::forget_pane_usage,
             usage::pane_last_session,
             usage::pane_last_prompt,
+            usage::list_processes,
+            usage::idle_shell_panes,
             assistant::assistant_chat,
             assistant::assistant_cancel,
             assistant::summarize_agent,
