@@ -1,6 +1,6 @@
 [package]
 name = "openterm"
-version = "1.1.1"
+version = "1.2.0"
 description = "OpenTerm — a keyboard-first terminal organizer"
 authors = ["OpenTerm"]
 edition = "2021"
