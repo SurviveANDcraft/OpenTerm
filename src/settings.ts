@@ -18,6 +18,8 @@ import { InboxKind, KIND_HINT, KIND_TITLE } from "./inbox";
 import { onHarnessState, runHarnessCheck } from "./harnessUpdates";
 import type { ConfirmOptions } from "./confirm";
 import { createDictationTab } from "./dictation/settingsTab";
+import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE, VOICES } from "./voice/liveSession";
+import { previewVoice, type VoicePreview } from "./voice/preview";
 
 /** One backup on disk, as described by the `list_backups` command. */
 export interface BackupInfo {
@@ -1464,6 +1466,170 @@ export function createSettingsView(handlers: SettingsHandlers) {
           }),
         ],
         { keywords: "openrouter ai api key" }
+      )
+    );
+
+    // Voice mode talks to Google directly (Gemini Live), so it has its own key.
+    const geminiKey = document.createElement("input");
+    geminiKey.type = "password";
+    geminiKey.placeholder = "AIza…";
+    geminiKey.value = s.geminiApiKey;
+    geminiKey.autocomplete = "off";
+    geminiKey.spellcheck = false;
+    geminiKey.addEventListener("input", () => {
+      s.geminiApiKey = geminiKey.value.trim();
+      markDirty();
+    });
+    const geminiStatus = document.createElement("span");
+    geminiStatus.className = "field-hint";
+    const geminiReveal = btn("btn-ghost", "Show", () => {
+      const show = geminiKey.type === "password";
+      geminiKey.type = show ? "text" : "password";
+      geminiReveal.textContent = show ? "Hide" : "Show";
+    });
+    const geminiTest = btn("btn-secondary", "Test key", () => {
+      const key = geminiKey.value.trim();
+      geminiStatus.className = "field-hint";
+      if (!key) {
+        geminiStatus.textContent = "Enter a key first.";
+        return;
+      }
+      geminiTest.disabled = true;
+      geminiStatus.textContent = "Contacting Gemini…";
+      // Listing models costs nothing and fails the same way a bad key would.
+      fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key } })
+        .then(async (r) => {
+          if (r.ok) {
+            geminiStatus.textContent = "✓ Key works";
+            geminiStatus.classList.add("ok");
+            return;
+          }
+          const body = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
+          throw new Error(body?.error?.message ?? `HTTP ${r.status}`);
+        })
+        .catch((e: unknown) => {
+          geminiStatus.textContent = `Failed: ${e instanceof Error ? e.message : String(e)}`;
+          geminiStatus.classList.add("bad");
+        })
+        .finally(() => {
+          geminiTest.disabled = false;
+        });
+    });
+    const geminiRow = document.createElement("div");
+    geminiRow.className = "key-input-row";
+    geminiRow.append(geminiKey, geminiReveal, geminiTest);
+    const geminiWrap = document.createElement("div");
+    geminiWrap.className = "control-stack";
+    geminiWrap.append(geminiRow, geminiStatus);
+
+    const voiceName = document.createElement("select");
+    for (const v of VOICES) {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = v;
+      voiceName.appendChild(o);
+    }
+    voiceName.value = VOICES.includes(s.voiceName) ? s.voiceName : DEFAULT_VOICE;
+    voiceName.addEventListener("change", () => {
+      s.voiceName = voiceName.value;
+      markDirty();
+    });
+
+    // Hear the selected voice before committing to it. Uses the key and model
+    // currently in the boxes, saved or not.
+    const voiceStatus = document.createElement("span");
+    voiceStatus.className = "field-hint";
+    let sample: VoicePreview | null = null;
+    const voicePreview = btn("btn-secondary", "Preview", () => {
+      if (sample) {
+        sample.stop();
+        return;
+      }
+      const key = geminiKey.value.trim();
+      voiceStatus.className = "field-hint";
+      if (!key) {
+        voiceStatus.textContent = "Add a Gemini API key first.";
+        return;
+      }
+      voiceStatus.textContent = "";
+      voicePreview.textContent = "Stop";
+      const mine = previewVoice(key, voiceModel.value.trim() || DEFAULT_LIVE_MODEL, voiceName.value);
+      sample = mine;
+      mine.done
+        .catch((e: unknown) => {
+          voiceStatus.textContent = `Failed: ${e instanceof Error ? e.message : String(e)}`;
+          voiceStatus.classList.add("bad");
+        })
+        .finally(() => {
+          if (sample !== mine) return;
+          sample = null;
+          voicePreview.textContent = "Preview";
+        });
+    });
+    // Picking another voice mid-sample plays the new one straight away.
+    voiceName.addEventListener("change", () => {
+      if (!sample) return;
+      sample.stop();
+      sample = null;
+      voicePreview.click();
+    });
+    const voiceRow = document.createElement("div");
+    voiceRow.className = "key-input-row";
+    voiceRow.append(voiceName, voicePreview);
+    const voiceWrap = document.createElement("div");
+    voiceWrap.className = "control-stack";
+    voiceWrap.append(voiceRow, voiceStatus);
+
+    const voiceAvatar = document.createElement("select");
+    for (const [value, label] of [["orb", "Orb"], ["buddy", "Buddy"], ["byte", "Byte"]]) {
+      const o = document.createElement("option");
+      o.value = value;
+      o.textContent = label;
+      voiceAvatar.appendChild(o);
+    }
+    voiceAvatar.value = s.voiceAvatar;
+    voiceAvatar.addEventListener("change", () => {
+      const v = voiceAvatar.value;
+      s.voiceAvatar = v === "buddy" || v === "byte" ? v : "orb";
+      markDirty();
+    });
+
+    const voiceModel = document.createElement("input");
+    voiceModel.type = "text";
+    voiceModel.value = s.voiceModel;
+    voiceModel.placeholder = DEFAULT_LIVE_MODEL;
+    voiceModel.spellcheck = false;
+    voiceModel.addEventListener("input", () => {
+      s.voiceModel = voiceModel.value.trim();
+      markDirty();
+    });
+
+    cats.ai.push(
+      section(
+        "Voice assistant",
+        "Optional. Talk to the Agents panel assistant out loud: the waveform button in its chat starts a live conversation. Runs on Google's Gemini Live with your own key.",
+        [
+          field("Gemini API key", geminiWrap, {
+            stack: true,
+            desc: "Free to create at aistudio.google.com/apikey, no card needed. On Google's free tier your conversations may be used to improve their products; the paid tier isn't.",
+            tip: "While a voice conversation runs, your microphone audio goes to Google, along with the terminal text the assistant reads to answer you.",
+            keywords: "gemini google voice live token secret speech talk microphone",
+          }),
+          field("Voice", voiceWrap, {
+            stack: true,
+            desc: "Applies from the next conversation.",
+            keywords: "voice assistant speech speaker gemini",
+          }),
+          field("Avatar", voiceAvatar, {
+            desc: "Buddy is a blob and Byte a tiny retro monitor. Both lip-sync to the assistant, follow your cursor, doze off when you mute and react when you poke them.",
+            keywords: "voice assistant avatar orb buddy byte character face animation robot monitor",
+          }),
+          field("Voice model", voiceModel, {
+            desc: `Any Gemini Live model id. Leave empty for ${DEFAULT_LIVE_MODEL}.`,
+            keywords: "voice assistant model gemini live",
+          }),
+        ],
+        { keywords: "voice gemini google live talk speech microphone api key" }
       )
     );
 

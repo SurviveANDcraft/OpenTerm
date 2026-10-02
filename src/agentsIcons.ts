@@ -33,6 +33,10 @@ import fold from "@phosphor-icons/core/regular/caret-line-down.svg?raw";
 import pencil from "@phosphor-icons/core/regular/pencil-simple.svg?raw";
 import play from "@phosphor-icons/core/regular/play.svg?raw";
 import paperPlane from "@phosphor-icons/core/regular/paper-plane-tilt.svg?raw";
+import file from "@phosphor-icons/core/regular/file-text.svg?raw";
+import mic from "@phosphor-icons/core/regular/microphone.svg?raw";
+import micOff from "@phosphor-icons/core/regular/microphone-slash.svg?raw";
+import waveform from "@phosphor-icons/core/regular/waveform.svg?raw";
 
 const RAW = {
   x,
@@ -66,6 +70,10 @@ const RAW = {
   pencil,
   play,
   paperPlane,
+  file,
+  mic,
+  micOff,
+  waveform,
 };
 
 export type IconName = keyof typeof RAW;

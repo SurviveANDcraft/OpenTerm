@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { clearHints, resolveDrop, setHint, type DropRegion } from "./terminals";
 import { copyText } from "./clipboard";
+import { fileDropZoneAt, type FileDropZone } from "./fileDropZones";
 
 export interface FileEntry {
   name: string;
@@ -145,6 +146,8 @@ function bindDrag(
     let dragging = false;
     let ghost: HTMLElement | null = null;
     let targetEl: HTMLElement | null = null;
+    /** A non-pane target under the pointer (the Agents panel chat). */
+    let zone: FileDropZone | null = null;
     let finished = false;
     // Two destinations for the same gesture, told apart by Ctrl+Alt:
     //   drag            -> type the path into that pane's stdin (unchanged)
@@ -181,7 +184,9 @@ function bindDrag(
       ghost = null;
       targetEl?.classList.remove("file-drop-target");
       clearHints();
-      if (commit && targetEl?.dataset.paneId) {
+      zone?.setHover(false);
+      if (commit && zone && !dockMode) zone.drop([entry.path]);
+      else if (commit && targetEl?.dataset.paneId) {
         if (dockMode && region) {
           handlers.onDockToPane(entry.path, entry.name, targetEl.dataset.paneId, region, {
             x: ghostRect ? ghostRect.left + ghostRect.width / 2 : lastX,
@@ -243,6 +248,21 @@ function bindDrag(
       const label = ghost.querySelector<HTMLElement>("span:last-child");
       if (label) label.textContent = dockMode ? `Open as pane: ${entry.name}` : entry.name;
       document.body.classList.toggle("dragging-file-dock", dockMode);
+
+      const z = dockMode ? null : fileDropZoneAt(x, y);
+      if (z !== zone) {
+        zone?.setHover(false);
+        z?.setHover(true);
+        zone = z;
+      }
+      if (zone) {
+        clearHints();
+        region = null;
+        ghost.classList.remove("armed");
+        targetEl?.classList.remove("file-drop-target");
+        targetEl = null;
+        return;
+      }
 
       if (dockMode) {
         targetEl?.classList.remove("file-drop-target");

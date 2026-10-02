@@ -12,6 +12,8 @@ import { playAttentionChime } from "./attention";
 import { openExternalUrl, panes } from "./terminals";
 import { markSvg, shellBrand, type PaneBrand } from "./paneIcons";
 import { registerPaneDropZone } from "./paneDropZones";
+import { registerFileDropZone } from "./fileDropZones";
+import { chatFile, fileBlock, type ChatFile } from "./agentsFiles";
 import {
   agentByPane,
   cachedLastPrompt,
@@ -20,6 +22,7 @@ import {
   listAgents,
   paneOfRef,
   refOf,
+  screenExcerpt,
   visibleSessions,
   type AgentInfo,
   type AgentStatus,
@@ -38,6 +41,7 @@ import {
 import { fetchPaneUsage, fmtCost } from "./usage";
 import { AGENTS_PANEL_WIDTH_MAX, AGENTS_PANEL_WIDTH_MIN } from "./types";
 import { icon, type IconName } from "./agentsIcons";
+import { createVoiceView } from "./voice/voiceView";
 
 export interface AgentsPanelHost {
   focusPane(sessionId: string, paneId: string): void;
@@ -267,6 +271,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
             <div class="ap-attached"></div>
             <div class="ap-input-row">
               <textarea class="ap-input" rows="1" spellcheck="false"></textarea>
+              <button class="ap-voice-btn" title="Talk to the assistant" aria-label="Start a voice conversation">${icon("waveform", 16)}</button>
               <button class="ap-send" title="Send (Enter)"></button>
             </div>
           </div>
@@ -319,6 +324,8 @@ export function createAgentsPanel(host: AgentsPanelHost) {
   let view: "agents" | "chat" = "agents";
   let scope: Scope = "all";
   let attached: string[] = [];
+  /** Files dropped into the chat, sent with the next question. */
+  let files: ChatFile[] = [];
   let shellsOpen = false;
   let tick: number | null = null;
   let summaryTick: number | null = null;
@@ -365,6 +372,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
       if (summaryTick !== null) window.clearInterval(summaryTick);
       tick = summaryTick = null;
       clearPeek();
+      voice.end(); // no hot mic behind a closed panel
     }
   }
 
@@ -783,11 +791,26 @@ export function createAgentsPanel(host: AgentsPanelHost) {
         )}</span><button data-detach="${esc(id)}" title="Remove">${icon("x", 10)}</button></span>`;
       })
       .join("");
-    setHtml(attachedEl, html);
-    attachedEl.hidden = !attached.length;
+    const fileHtml = files
+      .map(
+        (f) =>
+          `<span class="ap-att" title="${esc(f.path)}">${icon("file", 13)}<span class="ap-att-name">${esc(
+            f.name
+          )}</span><button data-unfile="${esc(f.path)}" title="Remove">${icon("x", 10)}</button></span>`
+      )
+      .join("");
+    setHtml(attachedEl, html + fileHtml);
+    attachedEl.hidden = !attached.length && !files.length;
   }
 
   attachedEl.addEventListener("click", (e) => {
+    const f = (e.target as HTMLElement).closest<HTMLElement>("[data-unfile]");
+    if (f) {
+      files = files.filter((x) => x.path !== f.dataset.unfile);
+      render();
+      input.focus();
+      return;
+    }
     const b = (e.target as HTMLElement).closest<HTMLElement>("[data-detach]");
     if (b) {
       attached = attached.filter((id) => id !== b.dataset.detach);
@@ -806,6 +829,18 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     },
     drop: (id: string) => {
       attach(id);
+      setView("chat", true);
+    },
+  });
+  // Files, from the Files view or from Windows, attach the same way.
+  registerFileDropZone({
+    el,
+    setHover: (on) => {
+      el.classList.toggle("drop-hover", on);
+      if (on) dropLabel.textContent = "Attach to your question";
+    },
+    drop: (paths) => {
+      for (const p of paths) if (!files.some((f) => f.path === p)) files.push(chatFile(p));
       setView("chat", true);
     },
   });
@@ -977,7 +1012,9 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     scrollToEnd();
   }
 
-  thread.addEventListener("keydown", (e) => {
+  /** Enter approves and Esc denies the focused card. Cards live in the chat
+   *  thread and, during a voice conversation, in its transcript: both listen. */
+  function cardKey(e: KeyboardEvent): void {
     if (e.key !== "Enter" && e.key !== "Escape") return;
     const t = e.target as HTMLElement;
     const card = t.closest<HTMLElement>(".ap-card");
@@ -988,7 +1025,22 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     e.preventDefault();
     e.stopPropagation();
     entry.settle(e.key === "Enter");
-  });
+  }
+
+  /** A click on a card's Approve, Deny or "Approve all". True when it was one. */
+  function cardClick(t: HTMLElement): boolean {
+    const decision = t.closest<HTMLElement>(".ap-card-ok, .ap-card-deny, .ap-card-all");
+    if (!decision) return false;
+    const card = decision.closest(".ap-card");
+    if (decision.classList.contains("ap-card-all")) {
+      for (const p of [...pending.values()]) p.settle(true);
+    } else {
+      [...pending.values()].find((p) => p.el === card)?.settle(decision.classList.contains("ap-card-ok"));
+    }
+    return true;
+  }
+
+  thread.addEventListener("keydown", cardKey);
 
   // ------------------------------------------------------------ watches
 
@@ -1031,15 +1083,23 @@ export function createAgentsPanel(host: AgentsPanelHost) {
         // Two quiet checks in a row: a prompt redraw between commands isn't "done".
         if (state === "done" && ++w.quiet < 2) continue;
         if (conversation.running) continue; // delivered on a later tick
-        watches.delete(id);
         const what = state === "gone" ? "was closed" : state === "waiting" ? "is now waiting on the user" : "has finished";
         const label = `${w.title} ${state === "gone" ? "was closed" : state === "waiting" ? "needs you" : "finished"}`;
-        void send(
-          `[Automatic notification, not typed by the user] ${refOf(id)} "${w.title}" ${what}.${w.note ? ` Your note: ${w.note}.` : ""}${
-            state === "gone" ? "" : " Its latest output is attached."
-          } Tell the user the actual result now (the agent's answer, the outcome, any error), not just that it finished, then carry on with anything you planned for this moment.`,
-          { paneId: state === "gone" ? null : id, label }
-        );
+        const notice = `[Automatic notification, not typed by the user] ${refOf(id)} "${w.title}" ${what}.${w.note ? ` Your note: ${w.note}.` : ""}${
+          state === "gone" ? "" : " Its latest output is attached."
+        } Tell the user the actual result now (the agent's answer, the outcome, any error), not just that it finished, then carry on with anything you planned for this moment.`;
+        // A live voice conversation hears about it instead of the typed chat.
+        if (voice.isActive()) {
+          const output = state === "gone" ? "" : `
+
+<terminal ref="${refOf(id)}">
+${screenExcerpt(id, 80, 5000) || "(terminal is empty)"}
+</terminal>`;
+          if (voice.notify(notice + output, label)) watches.delete(id);
+          continue;
+        }
+        watches.delete(id);
+        void send(notice, { paneId: state === "gone" ? null : id, label });
       }
     } finally {
       watchChecking = false;
@@ -1056,7 +1116,9 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     if (thread.querySelector(".ap-welcome")) thread.innerHTML = "";
 
     const sentAttached = notice ? (notice.paneId ? [notice.paneId] : []) : [...attached];
+    const sentFiles = notice ? [] : files;
     if (!notice) {
+      files = [];
       history.unshift(q);
       historyIdx = -1;
       attached = [];
@@ -1076,6 +1138,12 @@ export function createAgentsPanel(host: AgentsPanelHost) {
             .map((id) => `<button class="ap-ref" data-pane="${esc(id)}">${esc(panes.get(id)?.title ?? refOf(id))}</button>`)
             .join("")}</div>`
         : ""
+    }${
+      sentFiles.length
+        ? `<div class="ap-msg-refs">${sentFiles
+            .map((f) => `<span class="ap-att" title="${esc(f.path)}">${icon("file", 13)}<span class="ap-att-name">${esc(f.name)}</span></span>`)
+            .join("")}</div>`
+        : ""
     }<div class="ap-bubble">${esc(q)}</div>`;
     const aiEl = document.createElement("div");
     aiEl.className = "ap-msg ai";
@@ -1090,6 +1158,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     let latest = "";
     setRunning(true);
     try {
+      const blocks = await Promise.all(sentFiles.map(async (f) => ({ name: f.name, block: await fileBlock(f) })));
       const res = await conversation.ask(q, sentAttached, scope, currentMode().id, host.actions, {
         onText: (t) => {
           latest = t;
@@ -1110,7 +1179,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
         watch: addWatch,
         requestApproval: (plan, signal) => requestApproval(plan, signal, steps),
         onAction: (plan, step) => showAction(plan, step, steps),
-      });
+      }, blocks);
       if (frame) cancelAnimationFrame(frame);
       answer.innerHTML = res.text
         ? renderAnswer(res.text)
@@ -1127,6 +1196,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
         userEl.remove();
         aiEl.remove();
         attached = sentAttached.filter((id) => panes.has(id));
+        files = sentFiles;
         void send(q, notice);
       });
     } finally {
@@ -1173,16 +1243,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
 
   thread.addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
-    const decision = t.closest<HTMLElement>(".ap-card-ok, .ap-card-deny, .ap-card-all");
-    if (decision) {
-      const card = decision.closest(".ap-card");
-      if (decision.classList.contains("ap-card-all")) {
-        for (const p of [...pending.values()]) p.settle(true);
-      } else {
-        [...pending.values()].find((p) => p.el === card)?.settle(decision.classList.contains("ap-card-ok"));
-      }
-      return;
-    }
+    if (cardClick(t)) return;
     const ref = t.closest<HTMLElement>(".ap-ref");
     if (ref?.dataset.pane) {
       goTo(ref.dataset.pane);
@@ -1215,6 +1276,51 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     input.focus();
   });
   resummarizeBtn.addEventListener("click", () => refreshSlow(true));
+
+  // ------------------------------------------------------------ voice
+
+  /** Voice mode covers the panel; what's underneath must not take focus. */
+  function setCovered(covered: boolean): void {
+    for (const part of el.querySelectorAll<HTMLElement>(":scope > .ap-head, :scope > .ap-subbar, :scope > .ap-views"))
+      part.inert = covered;
+  }
+
+  const voice = createVoiceView({
+    conversation,
+    host: host.actions,
+    scope: () => scope,
+    mode: currentMode,
+    openAiSettings: host.openAiSettings,
+    renderAnswer,
+    toolIcon: (tool) => TOOL_ICON[tool] ?? "info",
+    watch: addWatch,
+    requestApproval,
+    showAction,
+    onEnd: (messages) => {
+      setCovered(false);
+      if (messages.length) {
+        if (thread.querySelector(".ap-welcome")) thread.innerHTML = "";
+        thread.append(...messages);
+        thread.scrollTop = thread.scrollHeight;
+      }
+      if (open && !input.disabled) input.focus();
+    },
+  });
+  el.append(voice.el);
+  // Approval cards shown during a voice conversation sit outside the thread.
+  voice.el.addEventListener("keydown", cardKey);
+  voice.el.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (cardClick(t)) return;
+    const ref = t.closest<HTMLElement>(".ap-ref");
+    if (ref?.dataset.pane) goTo(ref.dataset.pane);
+  });
+
+  $(".ap-voice-btn").addEventListener("click", () => {
+    if (conversation.running) return;
+    voice.start();
+    if (voice.isActive()) setCovered(true);
+  });
 
   // ------------------------------------------------------------ init
 

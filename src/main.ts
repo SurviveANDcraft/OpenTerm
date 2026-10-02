@@ -5,6 +5,7 @@ import "./searchModal.css";
 import "./tasks.css";
 import "./gitMap.css";
 import "./agents.css";
+import "./voice/voice.css";
 import { invoke } from "@tauri-apps/api/core";
 import { store } from "./store";
 import { applyTheme } from "./themes";

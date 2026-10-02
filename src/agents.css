@@ -1648,8 +1648,14 @@ body.resizing-agents .ap-resizer::after {
   transition: box-shadow var(--t-fast), background var(--t-fast);
 }
 
-body.dragging-term .ap-drop {
+body.dragging-term .ap-drop,
+body.dragging-file .agents-panel.drop-hover .ap-drop {
   display: grid;
+}
+
+/* Sent file chips keep their pill padding without a remove button. */
+.ap-msg-refs .ap-att {
+  padding-right: 9px;
 }
 
 .agents-panel.drop-hover .ap-drop::before {

@@ -3839,6 +3839,13 @@ body.ext-dragging .drop-hint[class*="region-"] {
   max-width: 100%;
 }
 
+/* The open list is drawn by the system: without its own colours it keeps the
+   default light background under the theme's light text. */
+.field select option {
+  color: var(--text);
+  background: var(--bg-app);
+}
+
 .control-wide {
   width: 300px;
   max-width: 100%;

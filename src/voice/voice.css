@@ -1,0 +1,1449 @@
+/* ================= Voice mode (Agents panel) =================
+   A layer over the whole panel while a spoken conversation runs. The orb is
+   the only thing that moves: JS writes the loudness of whoever is talking to
+   --lvl (0..1) every frame, and the phase (data-phase) picks its colour and
+   idle motion. Shapes and tokens follow agents.css. */
+
+/* Registered so the orb's colour cross-fades between phases instead of
+   snapping (gradients don't transition, a typed custom property does). */
+@property --vo-c {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e8b45a;
+}
+
+.ap-voice {
+  --vo-c: var(--accent);
+  --vo-orb: 132px;
+  --lvl: 0;
+  position: absolute;
+  inset: 0;
+  z-index: 2; /* under the resizer and the pane drop overlay */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  outline: none;
+  transition: --vo-c 420ms var(--ease-out);
+  animation: vo-in 340ms var(--ease-out);
+}
+
+.ap-voice[hidden] {
+  display: none;
+}
+
+.ap-voice.leaving {
+  pointer-events: none;
+  animation: vo-out 200ms var(--ease-out) forwards;
+}
+
+/* A wash of the orb's colour behind everything, so the panel feels lit by it. */
+.ap-voice::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 60% at 50% 0%, color-mix(in srgb, var(--vo-c) 11%, transparent), transparent 70%);
+  opacity: calc(0.55 + var(--lvl) * 0.45);
+  pointer-events: none;
+}
+
+.ap-voice > * {
+  position: relative;
+}
+
+.ap-voice[data-phase="connecting"],
+.ap-voice[data-phase="reconnecting"],
+.ap-voice[data-phase="muted"] {
+  --vo-c: color-mix(in srgb, var(--text-faint) 80%, var(--accent));
+}
+
+.ap-voice[data-phase="error"] {
+  --vo-c: var(--danger);
+}
+
+@keyframes vo-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+@keyframes vo-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ---- header: status, clock, mode ---- */
+
+.vo-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.vo-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.vo-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vo-c);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vo-c) 18%, transparent);
+}
+
+.ap-voice[data-phase="connecting"] .vo-status i,
+.ap-voice[data-phase="reconnecting"] .vo-status i,
+.ap-voice[data-phase="working"] .vo-status i,
+.ap-voice[data-phase="approval"] .vo-status i {
+  animation: vo-blink 1.1s ease-in-out infinite;
+}
+
+@keyframes vo-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.vo-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.vo-mode {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+}
+
+/* ---- stage: the orb ---- */
+
+/* Centred while nothing has been said; once the transcript starts it gives
+   the room to it and the orb settles smaller at the top. */
+.vo-stage {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 10px 20px 14px;
+  transition: flex-grow 520ms var(--ease-out);
+}
+
+.ap-voice:has(.vo-feed > *) {
+  --vo-orb: 84px;
+}
+
+.ap-voice:has(.vo-feed > *) .vo-stage {
+  flex-grow: 0;
+}
+
+.vo-orb {
+  position: relative;
+  width: var(--vo-orb);
+  height: var(--vo-orb);
+  transition:
+    width 520ms var(--ease-out),
+    height 520ms var(--ease-out);
+  animation:
+    vo-orb-in 620ms var(--ease-out) backwards,
+    vo-breathe 4.6s ease-in-out 620ms infinite;
+}
+
+.vo-orb i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+}
+
+@keyframes vo-orb-in {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+}
+
+@keyframes vo-breathe {
+  50% {
+    transform: scale(1.035);
+  }
+}
+
+/* Soft light around the orb; swells with the voice. */
+.vo-orb .vo-halo {
+  inset: -34%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--vo-c) 46%, transparent), transparent 72%);
+  filter: blur(10px);
+  opacity: calc(0.3 + var(--lvl) * 0.7);
+  transform: scale(calc(0.86 + var(--lvl) * 0.42));
+}
+
+/* A hairline orbit. Still while listening, turning while there's a wait. */
+.vo-orb .vo-ring {
+  inset: -9%;
+  background: conic-gradient(from 0deg, transparent 0 62%, color-mix(in srgb, var(--vo-c) 85%, transparent) 88%, transparent);
+  -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
+  mask: radial-gradient(closest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.5px));
+  opacity: 0;
+  transition: opacity 320ms var(--ease-out);
+}
+
+.ap-voice[data-phase="connecting"] .vo-ring,
+.ap-voice[data-phase="reconnecting"] .vo-ring,
+.ap-voice[data-phase="working"] .vo-ring,
+.ap-voice[data-phase="approval"] .vo-ring {
+  opacity: 1;
+  animation: vo-spin 1.5s linear infinite;
+}
+
+@keyframes vo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The sphere: a lit body, a slow drifting sheen inside it, a specular dot. */
+.vo-core {
+  overflow: hidden;
+  background:
+    radial-gradient(90% 90% at 32% 24%, color-mix(in srgb, var(--vo-c) 55%, white), transparent 58%),
+    radial-gradient(120% 120% at 70% 85%, color-mix(in srgb, var(--vo-c) 55%, black), transparent 62%),
+    var(--vo-c);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 16%, transparent),
+    inset 0 -14px 26px color-mix(in srgb, black 28%, transparent),
+    0 12px 34px color-mix(in srgb, var(--vo-c) calc(18% + var(--lvl) * 30%), transparent);
+  transform: scale(calc(1 + var(--lvl) * 0.13));
+}
+
+.vo-core::before {
+  content: "";
+  position: absolute;
+  inset: -30%;
+  background: conic-gradient(
+    from 0deg,
+    transparent,
+    color-mix(in srgb, white 34%, transparent) 18%,
+    transparent 38%,
+    color-mix(in srgb, black 22%, transparent) 62%,
+    transparent 82%
+  );
+  filter: blur(14px);
+  mix-blend-mode: soft-light;
+  animation: vo-spin 9s linear infinite;
+}
+
+.ap-voice[data-phase="speaking"] .vo-core::before {
+  animation-duration: 3.2s;
+}
+
+.vo-core::after {
+  content: "";
+  position: absolute;
+  top: 13%;
+  left: 20%;
+  width: 34%;
+  height: 22%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, white 55%, transparent), transparent);
+  filter: blur(3px);
+}
+
+.ap-voice[data-phase="muted"] .vo-orb,
+.ap-voice[data-phase="error"] .vo-orb {
+  animation-play-state: running, paused;
+}
+
+.ap-voice[data-phase="muted"] .vo-core,
+.ap-voice[data-phase="error"] .vo-core {
+  filter: saturate(0.5) brightness(0.8);
+}
+
+.ap-voice[data-phase="muted"] .vo-core::before,
+.ap-voice[data-phase="error"] .vo-core::before {
+  animation-play-state: paused;
+}
+
+/* ---- Buddy: the other avatar ----
+   A little character instead of the orb, drawn from plain boxes. Same inputs:
+   --lvl opens its mouth and squashes its body, the phase picks its mood, and
+   --px/--py (the pointer, -1..1) aim its eyes. Every length is in cqw, a
+   percent of the avatar's width, so it shrinks with the orb slot. */
+
+.vo-orb.buddy {
+  --px: 0;
+  --py: 0;
+  --vb-ink: #1d1420;
+  container-type: size;
+  cursor: pointer;
+}
+
+.vb {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+  /* Leans towards what it's looking at, and squashes, stretches and hops
+     with the voice: wider and shorter on each syllable. */
+  transform: perspective(420px) translateY(calc(var(--lvl) * -3cqw)) rotateY(calc(var(--px) * 26deg))
+    rotateX(calc(var(--py) * -17deg)) scale(calc(1 + var(--lvl) * 0.07), calc(1 - var(--lvl) * 0.06));
+  transform-style: preserve-3d;
+}
+
+/* Contact shadow: it tightens as Buddy lifts off, which is what makes the
+   hop read as height instead of just a resize. */
+.vo-orb.buddy::after {
+  content: "";
+  position: absolute;
+  left: 20cqw;
+  right: 20cqw;
+  bottom: -5cqw;
+  height: 7cqw;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.42), transparent);
+  filter: blur(1.5cqw);
+  opacity: calc(0.9 - var(--lvl) * 0.4);
+  transform: scaleX(calc(1 - var(--lvl) * 0.22));
+}
+
+/* The face slides a little across the body with the gaze, so the head seems
+   to turn rather than only the pupils moving. */
+.vb-face {
+  position: absolute;
+  inset: 0;
+  transform: translate(calc(var(--px) * 3cqw), calc(var(--py) * 2.2cqw));
+}
+
+.vo-orb.buddy.boop .vb {
+  animation: vb-boop 520ms var(--ease-out);
+}
+
+@keyframes vb-boop {
+  0% {
+    transform: scale(1, 1);
+  }
+  22% {
+    transform: scale(1.22, 0.72);
+  }
+  50% {
+    transform: scale(0.88, 1.16) translateY(-9%);
+  }
+  75% {
+    transform: scale(1.06, 0.95);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+
+.vb span,
+.vb b {
+  position: absolute;
+  display: block;
+}
+
+.vb-body {
+  position: absolute;
+  inset: 16cqw 6cqw 3cqw;
+  border-radius: 48% 48% 44% 44% / 56% 56% 42% 42%;
+  background:
+    radial-gradient(
+      90% 80% at calc(30% - var(--px) * 20%) calc(18% + var(--py) * 12%),
+      color-mix(in srgb, var(--vo-c) 52%, white),
+      transparent 60%
+    ),
+    radial-gradient(110% 100% at calc(70% - var(--px) * 16%) 100%, color-mix(in srgb, var(--vo-c) 62%, black), transparent 60%),
+    var(--vo-c);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 18%, transparent),
+    inset 0 -7cqw 12cqw color-mix(in srgb, black 20%, transparent),
+    0 9cqw 20cqw color-mix(in srgb, var(--vo-c) 28%, transparent);
+  animation: vb-sway 3.4s ease-in-out infinite;
+}
+
+@keyframes vb-sway {
+  0%,
+  100% {
+    transform: rotate(-2.2deg);
+  }
+  50% {
+    transform: rotate(2.2deg);
+  }
+}
+
+/* Antenna: a stem with a bulb that wobbles, and whirls while it thinks. */
+.vb-ant {
+  left: 50%;
+  top: 1cqw;
+  width: 2.4cqw;
+  height: 18cqw;
+  margin-left: -1.2cqw;
+  border-radius: 2cqw;
+  background: color-mix(in srgb, var(--vo-c) 70%, black);
+  transform-origin: 50% 100%;
+  animation: vb-wobble 2.6s ease-in-out infinite;
+}
+
+.vb-ant::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -5cqw;
+  width: 9cqw;
+  height: 9cqw;
+  margin-left: -4.5cqw;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, white, color-mix(in srgb, var(--vo-c) 70%, white) 55%);
+  box-shadow: 0 0 calc(4cqw + var(--lvl) * 16cqw) color-mix(in srgb, var(--vo-c) 80%, white);
+}
+
+@keyframes vb-wobble {
+  0%,
+  100% {
+    transform: rotate(-9deg);
+  }
+  50% {
+    transform: rotate(9deg);
+  }
+}
+
+/* Eyes: whites that blink, pupils that follow the pointer. */
+.vb-eye {
+  top: 19cqw;
+  width: 21cqw;
+  height: 25cqw;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: inset 0 -2cqw 3cqw rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+  transition: transform 90ms ease-in-out;
+}
+
+.vo-orb.buddy.blink .vb-eye {
+  transform: scaleY(0.06);
+}
+
+.vb-eye.l {
+  left: 17cqw;
+}
+
+.vb-eye.r {
+  right: 17cqw;
+}
+
+.vb-eye b {
+  left: 50%;
+  top: 50%;
+  width: 11cqw;
+  height: 11cqw;
+  margin: -5.5cqw 0 0 -5.5cqw;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #000 34%, var(--vb-ink) 36%, color-mix(in srgb, var(--vo-c) 45%, var(--vb-ink)) 100%);
+  transform: translate(calc(var(--px) * 4.5cqw), calc(var(--py) * 6cqw)) scale(calc(1 + var(--lvl) * 0.14));
+}
+
+/* A second, smaller catchlight: two highlights read as a wet, round eye. */
+.vb-eye b::before {
+  content: "";
+  position: absolute;
+  right: 20%;
+  bottom: 20%;
+  width: 16%;
+  height: 16%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.vb-eye b::after {
+  content: "";
+  position: absolute;
+  top: 16%;
+  left: 20%;
+  width: 34%;
+  height: 34%;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.vb-brow {
+  top: 11cqw;
+  width: 15cqw;
+  height: 3cqw;
+  border-radius: 2cqw;
+  background: color-mix(in srgb, var(--vb-ink) 78%, transparent);
+  transition: transform 260ms var(--ease-out);
+}
+
+.vb-brow.l {
+  left: 20cqw;
+}
+
+.vb-brow.r {
+  right: 20cqw;
+}
+
+.vb-cheek {
+  top: 44cqw;
+  width: 12cqw;
+  height: 7cqw;
+  border-radius: 50%;
+  background: #ff6f91;
+  filter: blur(2cqw);
+  opacity: calc(0.35 + var(--lvl) * 0.5);
+}
+
+.vb-cheek.l {
+  left: 9cqw;
+}
+
+.vb-cheek.r {
+  right: 9cqw;
+}
+
+/* Mouth: a smile at rest; talking, it opens with the loudness. */
+.vb-mouth {
+  left: 50%;
+  top: 50cqw;
+  width: 20cqw;
+  height: 8cqw;
+  transform: translateX(-50%);
+  border-radius: 2cqw 2cqw 12cqw 12cqw;
+  background: linear-gradient(#0d070f, var(--vb-ink));
+  box-shadow: inset 0 1cqw 2cqw rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  transition:
+    width 180ms var(--ease-out),
+    border-radius 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+
+/* Teeth, showing only once the mouth is open enough to talk. */
+.vb-mouth::before {
+  content: "";
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  top: 0;
+  height: 3.2cqw;
+  border-radius: 0 0 2cqw 2cqw;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 160ms;
+}
+
+.ap-voice[data-phase="speaking"] .vb-mouth::before {
+  opacity: 0.95;
+}
+
+.vb-mouth::after {
+  content: "";
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  bottom: -3cqw;
+  height: 7cqw;
+  border-radius: 50%;
+  background: #ff6f91;
+}
+
+.vb-z {
+  right: 4cqw;
+  top: 8cqw;
+  font: 700 13cqw var(--ui-display);
+  color: var(--text-dim);
+  opacity: 0;
+}
+
+/* -- moods -- */
+
+.ap-voice[data-phase="listening"] .vb-brow {
+  transform: translateY(-2cqw);
+}
+
+/* Loud vowels are tall and narrow, quiet ones wide and shallow. */
+.ap-voice[data-phase="speaking"] .vb-mouth {
+  width: calc(21cqw - var(--lvl) * 6cqw);
+  height: calc(4cqw + var(--lvl) * 25cqw);
+  border-radius: 40% 40% 50% 50%;
+}
+
+/* Thinking: eyes roll up and around, the antenna spins up. */
+.ap-voice[data-phase="working"] .vb-eye b,
+.ap-voice[data-phase="connecting"] .vb-eye b,
+.ap-voice[data-phase="reconnecting"] .vb-eye b {
+  animation: vb-think 1.5s ease-in-out infinite;
+}
+
+@keyframes vb-think {
+  0%,
+  100% {
+    transform: translate(-4cqw, -6cqw);
+  }
+  50% {
+    transform: translate(4cqw, -6cqw);
+  }
+}
+
+.ap-voice[data-phase="working"] .vb-brow.l {
+  transform: translateY(-3cqw) rotate(-10deg);
+}
+
+.ap-voice[data-phase="working"] .vb-brow.r {
+  transform: translateY(1cqw) rotate(8deg);
+}
+
+.ap-voice[data-phase="working"] .vb-ant,
+.ap-voice[data-phase="connecting"] .vb-ant,
+.ap-voice[data-phase="reconnecting"] .vb-ant {
+  animation-duration: 0.5s;
+}
+
+.ap-voice[data-phase="working"] .vb-mouth,
+.ap-voice[data-phase="connecting"] .vb-mouth,
+.ap-voice[data-phase="reconnecting"] .vb-mouth {
+  /* Pursed and pulled to one side: "hmm". */
+  width: 9cqw;
+  height: 4cqw;
+  border-radius: 3cqw;
+  transform: translateX(35%);
+}
+
+/* Needs your OK: looks down at the card, eyebrows up, a small "oh". */
+.ap-voice[data-phase="approval"] .vb-eye b {
+  transform: translate(0, 7cqw);
+}
+
+.ap-voice[data-phase="approval"] .vb-brow {
+  transform: translateY(-4cqw);
+}
+
+.ap-voice[data-phase="approval"] .vb-mouth {
+  width: 9cqw;
+  height: 10cqw;
+  border-radius: 50%;
+}
+
+/* Muted: asleep. Eyes shut, flat mouth, z's drifting off. */
+.ap-voice[data-phase="muted"] .vb-eye {
+  animation: none;
+  transform: scaleY(0.07);
+}
+
+.ap-voice[data-phase="muted"] .vb-mouth {
+  width: 10cqw;
+  height: 3cqw;
+  border-radius: 3cqw;
+}
+
+.ap-voice[data-phase="muted"] .vb-ant {
+  animation: none;
+  transform: rotate(38deg);
+}
+
+.ap-voice[data-phase="muted"] .vb-z {
+  animation: vb-z 2.6s ease-in infinite;
+}
+
+.ap-voice[data-phase="muted"] .vb-z.two {
+  animation-delay: 1.3s;
+}
+
+@keyframes vb-z {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.5);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(12cqw, -24cqw) scale(1.1);
+  }
+}
+
+/* Error: crossed-out eyes and a frown. */
+.ap-voice[data-phase="error"] .vb-eye {
+  animation: none;
+  background: none;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.ap-voice[data-phase="error"] .vb-eye b,
+.ap-voice[data-phase="error"] .vb-eye b::after {
+  top: 50%;
+  left: 50%;
+  width: 16cqw;
+  height: 3.4cqw;
+  margin: -1.7cqw 0 0 -8cqw;
+  border-radius: 2cqw;
+  background: var(--vb-ink);
+  transform: rotate(45deg);
+}
+
+.ap-voice[data-phase="error"] .vb-eye b::after {
+  margin: 0;
+  top: 0;
+  left: 0;
+  transform: rotate(90deg);
+}
+
+.ap-voice[data-phase="error"] .vb-mouth {
+  height: 6cqw;
+  border-radius: 12cqw 12cqw 2cqw 2cqw;
+}
+
+.ap-voice[data-phase="error"] .vb-mouth::after {
+  display: none;
+}
+
+.ap-voice[data-phase="muted"] .vb-body,
+.ap-voice[data-phase="error"] .vb-body {
+  animation-play-state: paused;
+  filter: saturate(0.6) brightness(0.85);
+}
+
+/* Poked: eyes squeeze shut with delight and it blushes. */
+.vo-orb.buddy.boop .vb-eye {
+  animation: none;
+  transform: scaleY(0.16);
+}
+
+.vo-orb.buddy.boop .vb-cheek {
+  opacity: 1;
+}
+
+.vo-orb.buddy.boop .vb-mouth {
+  height: 16cqw;
+  border-radius: 3cqw 3cqw 14cqw 14cqw;
+}
+
+/* ---- Byte: the third avatar ----
+   A tiny CRT monitor with a face on its screen. Same inputs as Buddy: --lvl
+   drives the equaliser it has for a mouth, --px/--py turn the whole set
+   towards the pointer in 3D, the phase picks what the screen shows. */
+
+.vo-orb.byte {
+  --px: 0;
+  --py: 0;
+  container-type: size;
+  cursor: pointer;
+}
+
+.vt {
+  position: absolute;
+  inset: 0;
+  transform: perspective(420px) rotateY(calc(var(--px) * 30deg)) rotateX(calc(var(--py) * -18deg))
+    translateY(calc(var(--lvl) * -2.5cqw));
+  transform-style: preserve-3d;
+}
+
+.vo-orb.byte::after {
+  content: "";
+  position: absolute;
+  left: 16cqw;
+  right: 16cqw;
+  bottom: -5cqw;
+  height: 7cqw;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.45), transparent);
+  filter: blur(1.5cqw);
+  transform: translateX(calc(var(--px) * -4cqw)) scaleX(calc(1 - var(--lvl) * 0.18));
+}
+
+/* Rabbit-ear antennas that twitch, and two stubby feet. */
+.vt-ant,
+.vt-foot {
+  position: absolute;
+  display: block;
+  background: color-mix(in srgb, var(--text) 30%, var(--bg-sidebar));
+}
+
+.vt-ant {
+  left: 50%;
+  top: 0;
+  width: 1.8cqw;
+  height: 17cqw;
+  border-radius: 1cqw;
+  transform-origin: 50% 100%;
+  rotate: -24deg;
+  animation: vt-twitch 3.8s ease-in-out infinite;
+}
+
+.vt-ant.r {
+  rotate: 24deg;
+  animation-delay: -1.9s;
+}
+
+.vt-ant::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -3cqw;
+  width: 5cqw;
+  height: 5cqw;
+  margin-left: -2.5cqw;
+  border-radius: 50%;
+  background: var(--vo-c);
+  box-shadow: 0 0 calc(2cqw + var(--lvl) * 12cqw) var(--vo-c);
+}
+
+@keyframes vt-twitch {
+  0%,
+  86%,
+  100% {
+    transform: rotate(0deg);
+  }
+  90% {
+    transform: rotate(9deg);
+  }
+  94% {
+    transform: rotate(-6deg);
+  }
+}
+
+.vt-foot {
+  bottom: 6cqw;
+  width: 14cqw;
+  height: 8cqw;
+  border-radius: 2cqw 2cqw 4cqw 4cqw;
+}
+
+.vt-foot.l {
+  left: 20cqw;
+}
+
+.vt-foot.r {
+  right: 20cqw;
+}
+
+/* The set: moulded plastic with a chin for the power light. */
+.vt-case {
+  position: absolute;
+  inset: 15cqw 5cqw 11cqw;
+  border-radius: 13cqw 13cqw 11cqw 11cqw;
+  background: linear-gradient(
+    168deg,
+    color-mix(in srgb, var(--text) 34%, var(--bg-sidebar)),
+    color-mix(in srgb, var(--text) 14%, var(--bg-sidebar)) 70%
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent),
+    inset 0 -5cqw 8cqw rgba(0, 0, 0, 0.3),
+    0 6cqw 14cqw rgba(0, 0, 0, 0.35);
+}
+
+.vt-led {
+  position: absolute;
+  right: 9cqw;
+  bottom: 4cqw;
+  width: 4cqw;
+  height: 4cqw;
+  border-radius: 50%;
+  background: var(--vo-c);
+  box-shadow: 0 0 4cqw var(--vo-c);
+}
+
+/* The tube: dark glass that glows with whatever is on it. */
+.vt-screen {
+  position: absolute;
+  inset: 6cqw 6cqw 12cqw;
+  border-radius: 9cqw / 10cqw;
+  background: radial-gradient(120% 100% at 50% 40%, color-mix(in srgb, var(--vo-c) 13%, #06080a), #030405 90%);
+  box-shadow:
+    inset 0 0 0 1.2cqw rgba(0, 0, 0, 0.55),
+    inset 0 0 calc(7cqw + var(--lvl) * 14cqw) color-mix(in srgb, var(--vo-c) 42%, transparent);
+  overflow: hidden;
+  animation: vt-flicker 5.5s steps(1) infinite;
+}
+
+/* Scanlines, then the glare of the glass on top. */
+.vt-screen::before,
+.vt-screen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.vt-screen::before {
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.26) 2px 3px);
+}
+
+.vt-screen::after {
+  background: linear-gradient(125deg, rgba(255, 255, 255, 0.16), transparent 34%);
+  /* The reflection slides as the set turns. */
+  transform: translateX(calc(var(--px) * -10cqw));
+}
+
+@keyframes vt-flicker {
+  0%,
+  100% {
+    filter: none;
+  }
+  47% {
+    filter: brightness(1.18);
+  }
+  48% {
+    filter: brightness(0.9);
+  }
+  49% {
+    filter: none;
+  }
+}
+
+.vt-eye {
+  position: absolute;
+  top: 10cqw;
+  width: 10cqw;
+  height: 15cqw;
+  border-radius: 3.5cqw;
+  background: var(--vo-c);
+  box-shadow: 0 0 5cqw color-mix(in srgb, var(--vo-c) 80%, transparent);
+  translate: calc(var(--px) * 5cqw) calc(var(--py) * 4cqw);
+  transition:
+    scale 90ms ease-in-out,
+    border-radius 200ms var(--ease-out),
+    opacity 160ms;
+}
+
+.vt-eye.l {
+  left: 18cqw;
+}
+
+.vt-eye.r {
+  right: 18cqw;
+}
+
+.vo-orb.byte.blink .vt-eye {
+  scale: 1 0.1;
+}
+
+/* Mouth: seven bars resting in a smile, each jumping to the voice by its own
+   amount (--k), tallest in the middle like a real spectrum. */
+.vt-eq {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 9cqw;
+  height: 4cqw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.7cqw;
+  translate: calc(var(--px) * 3cqw) calc(var(--py) * 2cqw);
+  transition: opacity 160ms;
+}
+
+.vt-eq b {
+  display: block;
+  width: 3.2cqw;
+  height: calc(2.4cqw + var(--lvl) * var(--k) * 1cqw);
+  border-radius: 1.6cqw;
+  background: var(--vo-c);
+  box-shadow: 0 0 3cqw color-mix(in srgb, var(--vo-c) 75%, transparent);
+  transform: translateY(var(--y));
+}
+
+.vt-eq b:nth-child(1),
+.vt-eq b:nth-child(7) {
+  --k: 7;
+  --y: -2.6cqw;
+}
+
+.vt-eq b:nth-child(2),
+.vt-eq b:nth-child(6) {
+  --k: 15;
+  --y: -0.6cqw;
+}
+
+.vt-eq b:nth-child(3),
+.vt-eq b:nth-child(5) {
+  --k: 22;
+  --y: 0.8cqw;
+}
+
+.vt-eq b:nth-child(4) {
+  --k: 27;
+  --y: 1.3cqw;
+}
+
+/* While it talks the bars also shimmer on their own clocks, so a steady
+   loudness still looks like sound and not a frozen shape. */
+.ap-voice[data-phase="speaking"] .vt-eq b {
+  animation: vt-shimmer 420ms ease-in-out infinite alternate;
+}
+
+.ap-voice[data-phase="speaking"] .vt-eq b:nth-child(2n) {
+  animation-duration: 310ms;
+}
+
+.ap-voice[data-phase="speaking"] .vt-eq b:nth-child(3n) {
+  animation-duration: 530ms;
+  animation-delay: -200ms;
+}
+
+@keyframes vt-shimmer {
+  from {
+    scale: 1 0.6;
+  }
+  to {
+    scale: 1 1.15;
+  }
+}
+
+/* Text the screen prints instead of a face: set per mood below. */
+.vt-msg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font: 700 17cqw var(--mono);
+  letter-spacing: -0.04em;
+  color: var(--vo-c);
+  text-shadow: 0 0 5cqw var(--vo-c);
+}
+
+/* -- moods -- */
+
+.ap-voice[data-phase="speaking"] .vt-eye {
+  scale: 1 0.82;
+}
+
+/* Thinking: eyes become spinners, the mouth a travelling wave. */
+.ap-voice[data-phase="working"] .vt-eye,
+.ap-voice[data-phase="connecting"] .vt-eye,
+.ap-voice[data-phase="reconnecting"] .vt-eye {
+  height: 12cqw;
+  width: 12cqw;
+  border-radius: 50%;
+  background: conic-gradient(var(--vo-c), transparent 78%);
+  -webkit-mask: radial-gradient(closest-side, transparent 52%, #000 54%);
+  mask: radial-gradient(closest-side, transparent 52%, #000 54%);
+  box-shadow: none;
+  animation: vo-spin 0.8s linear infinite;
+}
+
+.ap-voice[data-phase="working"] .vt-eq b,
+.ap-voice[data-phase="connecting"] .vt-eq b,
+.ap-voice[data-phase="reconnecting"] .vt-eq b {
+  --y: 0cqw;
+  animation: vt-wave 0.9s ease-in-out infinite;
+}
+
+.vt-eq b:nth-child(2) {
+  animation-delay: -0.78s;
+}
+
+.vt-eq b:nth-child(3) {
+  animation-delay: -0.66s;
+}
+
+.vt-eq b:nth-child(4) {
+  animation-delay: -0.54s;
+}
+
+.vt-eq b:nth-child(5) {
+  animation-delay: -0.42s;
+}
+
+.vt-eq b:nth-child(6) {
+  animation-delay: -0.3s;
+}
+
+.vt-eq b:nth-child(7) {
+  animation-delay: -0.18s;
+}
+
+@keyframes vt-wave {
+  0%,
+  100% {
+    translate: 0 1.6cqw;
+  }
+  50% {
+    translate: 0 -1.6cqw;
+  }
+}
+
+.ap-voice[data-phase="working"] .vt-led,
+.ap-voice[data-phase="connecting"] .vt-led,
+.ap-voice[data-phase="reconnecting"] .vt-led {
+  animation: vo-blink 0.5s ease-in-out infinite;
+}
+
+/* Needs your OK: wide round eyes, and it asks. */
+.ap-voice[data-phase="approval"] .vt-eye {
+  border-radius: 50%;
+  scale: 1.2 1;
+}
+
+.ap-voice[data-phase="approval"] .vt-eq {
+  opacity: 0;
+}
+
+.ap-voice[data-phase="approval"] .vt-msg {
+  padding-top: 26cqw;
+  font-size: 12cqw;
+  animation: vo-blink 1.1s ease-in-out infinite;
+}
+
+.ap-voice[data-phase="approval"] .vt-msg::after {
+  content: "OK?";
+}
+
+/* Muted: screen saver. Eyes shut, mouth flat, z's in the corner. */
+.ap-voice[data-phase="muted"] .vt-screen {
+  animation: none;
+  filter: brightness(0.6);
+}
+
+.ap-voice[data-phase="muted"] .vt-eye {
+  scale: 1 0.12;
+}
+
+.ap-voice[data-phase="muted"] .vt-eq b {
+  --y: 0cqw;
+}
+
+.ap-voice[data-phase="muted"] .vt-msg {
+  place-items: start end;
+  padding: 3cqw 8cqw;
+  font-size: 10cqw;
+  animation: vo-blink 2.4s ease-in-out infinite;
+}
+
+.ap-voice[data-phase="muted"] .vt-msg::after {
+  content: "zZ";
+}
+
+.ap-voice[data-phase="muted"] .vt-ant {
+  animation: none;
+}
+
+/* Error: the face is gone, the tube prints its feelings and jitters. */
+.ap-voice[data-phase="error"] .vt-eye,
+.ap-voice[data-phase="error"] .vt-eq,
+.vo-orb.byte.boop .vt-eye,
+.vo-orb.byte.boop .vt-eq {
+  opacity: 0;
+}
+
+.ap-voice[data-phase="error"] .vt-msg::after {
+  content: "x_x";
+}
+
+.ap-voice[data-phase="error"] .vt-screen {
+  animation: vt-glitch 2.2s steps(1) infinite;
+}
+
+@keyframes vt-glitch {
+  0%,
+  100% {
+    transform: none;
+    filter: none;
+  }
+  91% {
+    transform: translateX(-1.5cqw) skewX(-6deg);
+    filter: hue-rotate(40deg);
+  }
+  94% {
+    transform: translateX(1.5cqw) skewX(5deg);
+  }
+  97% {
+    transform: none;
+  }
+}
+
+/* Poked: it rattles on its feet and the screen winces. */
+.vo-orb.byte.boop .vt {
+  animation: vt-boop 560ms var(--ease-out);
+}
+
+.vo-orb.byte.boop .vt-msg::after {
+  content: ">_<";
+}
+
+.vo-orb.byte.boop .vt-screen {
+  filter: brightness(1.5);
+}
+
+@keyframes vt-boop {
+  0% {
+    transform: perspective(420px) rotate(0) scale(1);
+  }
+  15% {
+    transform: perspective(420px) rotate(-9deg) scale(0.92, 1.06) translateY(-6cqw);
+  }
+  35% {
+    transform: perspective(420px) rotate(8deg) scale(1.06, 0.94);
+  }
+  55% {
+    transform: perspective(420px) rotate(-5deg);
+  }
+  75% {
+    transform: perspective(420px) rotate(3deg);
+  }
+  100% {
+    transform: perspective(420px) rotate(0) scale(1);
+  }
+}
+
+.vo-hint {
+  max-width: 260px;
+  min-height: 18px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.vo-hint:empty {
+  display: none;
+}
+
+.ap-voice.failed .vo-hint {
+  color: var(--text-dim);
+}
+
+/* ---- transcript ---- */
+
+.vo-feed {
+  flex: 0 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 14px 12px;
+  /* Older lines fade out under the orb instead of ending on a hard edge. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 26px);
+  mask-image: linear-gradient(to bottom, transparent, #000 26px);
+  user-select: text;
+  -webkit-user-select: text;
+  transition: flex-grow 520ms var(--ease-out);
+}
+
+.vo-feed:empty {
+  padding: 0;
+}
+
+.ap-voice:has(.vo-feed > *) .vo-feed {
+  flex-grow: 1;
+}
+
+/* ---- controls ---- */
+
+.vo-controls {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 12px;
+}
+
+.vo-btn {
+  height: 38px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--ap-r-lg);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--elev-2);
+  box-shadow: inset 0 0 0 1px var(--ap-line);
+  white-space: nowrap;
+}
+
+.vo-btn:hover {
+  background: var(--elev-3);
+  box-shadow: inset 0 0 0 1px var(--hover-line);
+}
+
+.vo-btn:active {
+  transform: scale(0.98);
+}
+
+.vo-mute {
+  flex: none;
+  min-width: 104px;
+}
+
+.vo-mute.on {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 13%, var(--elev-1));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 34%, transparent);
+}
+
+.vo-end {
+  flex: 1;
+  min-width: 0;
+}
+
+.vo-end span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-voice.failed .vo-mute {
+  display: none;
+}
+
+.ap-voice.failed .vo-end {
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* ---- in the chat: the way in, and the mark a session leaves ---- */
+
+.ap-voice-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--ap-r);
+  color: var(--text-dim);
+}
+
+.ap-voice-btn:hover {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.ap-voice-btn:active {
+  transform: scale(0.94);
+}
+
+.agents-panel.running .ap-voice-btn {
+  display: none;
+}
+
+.ap-voice-mark {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-faint);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ap-voice-mark::before,
+.ap-voice-mark::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--ap-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-voice,
+  .ap-voice.leaving,
+  .vo-orb,
+  .vo-ring,
+  .vo-core::before,
+  .vo-orb.buddy *,
+  .vo-orb.byte *,
+  .vo-status i {
+    animation: none !important;
+  }
+
+  .vo-stage,
+  .vo-feed,
+  .vo-orb {
+    transition: none;
+  }
+}
+
+/* Crossed-out eyes don't blink or glint. */
+.ap-voice[data-phase="error"] .vo-orb.buddy .vb-eye {
+  transform: none;
+}
+
+.ap-voice[data-phase="error"] .vb-eye b::before {
+  display: none;
+}
+
+/* ---- depth: both characters are real 3D objects ----
+   Each is a preserve-3d scene. The body is extruded backwards out of stacked
+   copies of its own outline, and the features sit on their own planes in
+   front of or behind it, so turning towards the pointer shows a side, and
+   near things slide past far things. */
+
+.vb-body,
+.vb-face,
+.vt-case {
+  transform-style: preserve-3d;
+}
+
+/* Buddy's back: a dome, each slice further away and smaller than the last. */
+.vb-s {
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--vo-c) calc(82% - var(--i) * 5%), black);
+  transform: translateZ(calc(var(--i) * -3.2cqw)) scale(calc(1 - var(--i) * var(--i) * 0.0125));
+}
+
+/* The face bulges forward: cheeks nearest the skin, pupils and brows furthest
+   out, so the eyes overtake the cheeks as the head turns. */
+.vb-cheek {
+  translate: 0 0 2cqw;
+}
+
+.vb-eye,
+.vb-mouth {
+  translate: 0 0 5cqw;
+}
+
+.vb-brow {
+  translate: 0 0 7cqw;
+}
+
+.vb-ant {
+  translate: 0 0 -11cqw;
+}
+
+/* Byte's tube: the case runs back and tapers, like a real CRT. */
+.vt-slab {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) calc(20% - var(--i) * 1.6%), var(--bg-sidebar));
+  transform: translateZ(calc(var(--i) * -3.4cqw)) scale(calc(1 - var(--i) * var(--i) * 0.006));
+}
+
+.vt-led {
+  transform: translateZ(1.2cqw);
+}
+
+.vt-ant {
+  translate: 0 0 -12cqw;
+}
+
+.vt-foot {
+  translate: 0 0 -9cqw;
+}

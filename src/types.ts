@@ -611,6 +611,16 @@ export interface Settings {
   assistantPerms: Partial<Record<AssistantPerm, boolean>>;
   /** Chime when the assistant asks you to approve an action. */
   assistantApprovalSound: boolean;
+  /** Google AI Studio API key for the Agents panel's voice mode (Gemini Live).
+   *  Empty = the voice button leads to Settings. */
+  geminiApiKey: string;
+  /** Prebuilt Gemini voice the assistant speaks with. */
+  voiceName: string;
+  /** What voice mode shows while you talk: the abstract orb, or a character
+   *  whose face follows the conversation (Buddy the blob, Byte the monitor). */
+  voiceAvatar: "orb" | "buddy" | "byte";
+  /** Gemini Live model id. Empty uses the built-in default. */
+  voiceModel: string;
   /** Flash the taskbar icon when a pane needs attention (approval prompt or
    *  error), in addition to the sound and inbox item. */
   taskbarFlash: boolean;
@@ -673,6 +683,10 @@ export const DEFAULT_SETTINGS: Settings = {
   assistantModel: "",
   assistantPerms: {},
   assistantApprovalSound: true,
+  geminiApiKey: "",
+  voiceName: "Aoede",
+  voiceAvatar: "orb",
+  voiceModel: "",
   taskbarFlash: true,
   inboxNotifications: {},
   keybinds: { ...DEFAULT_KEYBINDS },
