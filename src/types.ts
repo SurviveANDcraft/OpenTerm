@@ -606,6 +606,9 @@ export interface Settings {
   /** OpenRouter model slug for the Agents panel assistant. Empty uses the
    *  built-in default (DeepSeek V4 Flash). */
   assistantModel: string;
+  /** What the assistant may touch, per area. A missing key counts as on;
+   *  the modes above still decide whether it may act at all. */
+  assistantPerms: Partial<Record<AssistantPerm, boolean>>;
   /** Chime when the assistant asks you to approve an action. */
   assistantApprovalSound: boolean;
   /** Flash the taskbar icon when a pane needs attention (approval prompt or
@@ -626,6 +629,9 @@ export interface Settings {
 /** What the Agents panel assistant may do: read only, act with approval, or
  *  act on its own. */
 export type AssistantMode = "ask" | "act" | "auto";
+
+/** Areas of the app the assistant can be allowed into (Settings, AI). */
+export type AssistantPerm = "layout" | "input" | "tasks" | "sessions" | "ui" | "settings" | "usage";
 
 export const SIDEBAR_WIDTH_MIN = 180;
 export const SIDEBAR_WIDTH_MAX = 420;
@@ -665,6 +671,7 @@ export const DEFAULT_SETTINGS: Settings = {
   assistantAllowAct: false,
   assistantAllowAuto: false,
   assistantModel: "",
+  assistantPerms: {},
   assistantApprovalSound: true,
   taskbarFlash: true,
   inboxNotifications: {},

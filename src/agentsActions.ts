@@ -19,7 +19,8 @@ import { isShellPrompt, msSinceOutput } from "./commandQueue";
 import { invoke } from "@tauri-apps/api/core";
 import { panes } from "./terminals";
 import { commandRisks, promptRisks } from "./actionRisk";
-import type { Dir } from "./types";
+import type { AppHost } from "./agentsAppActions";
+import type { AssistantPerm, Dir } from "./types";
 
 export interface ActionHost {
   /** Splits a pane with a fresh terminal; returns the new pane's id. */
@@ -36,10 +37,18 @@ export interface ActionHost {
   toggleZoom(paneId: string): void;
   toggleFold(paneId: string): void;
   renamePane(paneId: string, name: string): void;
+  /** App-level operations (tasks, sessions, settings): agentsAppActions.ts. */
+  app: AppHost;
 }
 
-/** "layout" changes what's on screen; "input" types into a terminal. */
-export type ActionTier = "layout" | "input";
+/** "layout" changes what's on screen; "input" types into a terminal. The
+ *  rest are the app-level tiers of agentsAppActions.ts. */
+export type ActionTier = Exclude<AssistantPerm, "usage">;
+
+/** The permission a pane action tool falls under. */
+export function tierOfTool(name: string): ActionTier {
+  return name === "run_command" || name === "prompt_agent" ? "input" : "layout";
+}
 
 export interface ActionResult extends ToolRun {
   ok: boolean;
@@ -60,6 +69,8 @@ export interface ActionPlan {
   detail: string | null;
   /** Why this needs approval even in Auto mode; empty when it doesn't. */
   risks: string[];
+  /** Always waits for approval, in every mode, without being a risk. */
+  confirm?: boolean;
   paneIds: string[];
   /** Step line if the user says no. */
   deniedLabel: string;
@@ -74,6 +85,8 @@ export interface ActionContext {
   sessionInScope(sessionId: string): boolean;
   /** Session for open_terminal when the model names none. */
   defaultSessionId: string | null;
+  /** Whether the user left this permission on in Settings. */
+  can(perm: AssistantPerm): boolean;
 }
 
 export type Planned = { plan: ActionPlan } | { refused: ToolRun };
@@ -82,6 +95,7 @@ export type Planned = { plan: ActionPlan } | { refused: ToolRun };
 
 const ref = { type: "string", description: "Terminal ref, e.g. T3" };
 const direction = { type: "string", enum: ["right", "down"], description: "Where the new pane goes. Default right." };
+const notify = { type: "boolean", description: "Default true: you get a message with the output when it finishes." };
 
 function tool(name: string, description: string, properties: Record<string, unknown>, required: string[]) {
   return { type: "function", function: { name, description, parameters: { type: "object", properties, required } } };
@@ -97,6 +111,7 @@ export const ACTION_TOOL_DEFS = [
       ref: { type: "string", description: "Open beside this terminal instead" },
       direction,
       command: { type: "string", description: "Typed once the shell is ready. One command, no chaining." },
+      notify,
     },
     []
   ),
@@ -119,13 +134,13 @@ export const ACTION_TOOL_DEFS = [
   tool(
     "run_command",
     "Type one command into a plain shell idle at its prompt and press Enter.",
-    { ref, command: { type: "string" } },
+    { ref, command: { type: "string" }, notify },
     ["ref", "command"]
   ),
   tool(
     "prompt_agent",
     "Send a new prompt to an agent CLI idle at its input. Never for answering its permission prompts.",
-    { ref, text: { type: "string" } },
+    { ref, text: { type: "string" }, notify },
     ["ref", "text"]
   ),
 ];
@@ -218,6 +233,19 @@ function agentBlocker(a: AgentInfo): string | null {
     return `${a.ref} is asking for permission. Only the user may answer that; tell them it's waiting.`;
   if (a.status === "working") return `${a.ref} is mid-turn. Wait until it's idle, or ask the user.`;
   return null;
+}
+
+export type PaneState = "busy" | "done" | "waiting" | "gone";
+
+/** Where a watched terminal stands (see notify_when_done): still running,
+ *  finished, blocked on the user, or closed. */
+export async function paneState(paneId: string): Promise<PaneState> {
+  const a = panes.has(paneId) ? agentByPane(paneId) : null;
+  if (!a) return "gone";
+  if (isPaneWaiting(paneId)) return "waiting";
+  if (a.brand) return a.status === "working" || a.subagents > 0 ? "busy" : "done";
+  await refreshShellIdle();
+  return shellReady(paneId) ? "done" : "busy";
 }
 
 function waitForShell(paneId: string, signal: AbortSignal): Promise<boolean> {

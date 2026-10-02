@@ -4,6 +4,7 @@ import { store } from "./store";
 import {
   ACTIONS,
   Action,
+  AssistantPerm,
   DEFAULT_KEYBINDS,
   openTaskCount,
   Session,
@@ -1412,7 +1413,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
     allowAuto.disabled = !s.assistantAllowAct;
     const autoField = field("Allow Auto mode", allowAuto, {
       desc: s.assistantAllowAct
-        ? "The assistant acts without asking. Risky commands, closing busy terminals and prompts that ask an agent to do something risky still need your approval."
+        ? "The assistant acts without asking. Setting changes, risky commands, closing busy terminals and prompts that ask an agent to do something risky still need your approval."
         : "Needs Act mode first.",
       keywords: "agents panel assistant auto mode actions autonomous",
     });
@@ -1453,7 +1454,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
             keywords: "agents panel cards summary sidebar assistant",
           }),
           field("Allow Act mode", allowAct, {
-            desc: "The Agents panel assistant can arrange panes, run commands in idle shells and prompt idle agents. You approve every action first.",
+            desc: "The Agents panel assistant can arrange panes, run commands in idle shells, prompt idle agents and manage tasks, sessions and settings. You approve every action first, except task edits.",
             keywords: "agents panel assistant act mode actions approve",
           }),
           autoField,
@@ -1463,6 +1464,39 @@ export function createSettingsView(handlers: SettingsHandlers) {
           }),
         ],
         { keywords: "openrouter ai api key" }
+      )
+    );
+
+    // Each area the assistant can reach is its own switch. A missing key
+    // counts as on.
+    const perms: [AssistantPerm, string, string][] = [
+      ["layout", "Arrange panes", "Open, split, close, resize and rename terminals."],
+      ["input", "Type into terminals", "Run commands in idle shells and prompt idle agents."],
+      ["tasks", "Create and edit tasks", "Add tasks to the Tasks panel and edit them. Runs without asking, in Act and Auto."],
+      ["sessions", "Create and edit sessions", "Start new sessions, rename them, change their colour or folder."],
+      ["ui", "Show and hide panels", "Toggle the sidebar, Tasks panel, inbox and Settings page, and switch sessions."],
+      ["usage", "Read usage and cost", "See tokens, cost and active time per terminal and session."],
+      [
+        "settings",
+        "Change settings",
+        "Appearance, terminal and notification settings only, and you approve every change, even in Auto. API keys, the assistant's own modes, model and permissions, the shell, dictation and keybinds are always off limits.",
+      ],
+    ];
+    cats.ai.push(
+      section(
+        "Assistant permissions",
+        "What the Agents panel assistant may touch. Acting still needs Act or Auto mode; these switches narrow it further.",
+        perms.map(([key, label, desc]) =>
+          field(
+            label,
+            toggle(s.assistantPerms[key] !== false, (v) => {
+              s.assistantPerms = { ...s.assistantPerms, [key]: v };
+              markDirty();
+            }),
+            { desc, keywords: "agents panel assistant permissions allow access" }
+          )
+        ),
+        { keywords: "assistant permissions agents access" }
       )
     );
 

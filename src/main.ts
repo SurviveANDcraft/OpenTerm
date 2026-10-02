@@ -2907,6 +2907,43 @@ const agentsPanel = createAgentsPanel({
       panes.get(paneId)?.setCustomName(name);
       renamePane(paneId, name);
     },
+    app: {
+      createSession: (opts) => {
+        const before = store.state.sessions.length;
+        newSession(opts);
+        return store.state.sessions.length > before ? store.state.sessions[store.state.sessions.length - 1].id : null;
+      },
+      showSession: (id) => setActiveSession(id),
+      sessionsChanged: () => {
+        updateChrome();
+        store.save();
+      },
+      tasksChanged: () => {
+        tasksPanel.refresh();
+        updateChrome();
+        store.save();
+      },
+      applySettings: () => {
+        applySettingsLive();
+        // The settings page edits a draft; resync it so a later Save there
+        // doesn't put the old value back.
+        if (settingsOpen) settingsView.reset();
+      },
+      panelOpen: (panel) =>
+        panel === "sidebar"
+          ? store.state.settings.sidebarVisible
+          : panel === "tasks"
+            ? tasksPanel.isOpen()
+            : panel === "inbox"
+              ? inboxPanel.isOpen()
+              : settingsOpen,
+      togglePanel: (panel) => {
+        if (panel === "sidebar") runAction("toggleSidebar");
+        else if (panel === "tasks") toggleTasks();
+        else if (panel === "inbox") toggleInbox();
+        else toggleSettings();
+      },
+    },
   },
 });
 

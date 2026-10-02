@@ -51,19 +51,19 @@ export const MODES: readonly ModeDef[] = [
     actions: false,
     autoTiers: [],
     maxSteps: 6,
-    prompt: `Mode: Ask. You are read-only: you cannot type into terminals, run commands or change the layout. If asked to, say in one line that Act mode (the menu under the chat input) can do it.`,
+    prompt: `Mode: Ask. You are read-only: you cannot type into terminals, run commands, change the layout, or edit tasks, sessions and settings. If asked to, say in one line that Act mode (the menu under the chat input) can do it.`,
   },
   {
     id: "act",
     label: "Act",
     icon: "handPointing",
-    hint: "Proposes actions. You approve each one.",
+    hint: "Proposes actions. You approve each one, except task edits.",
     disclaimer: "Review each action before approving.",
     unlocked: (s) => s.assistantAllowAct,
     actions: true,
-    autoTiers: [],
+    autoTiers: ["tasks"],
     maxSteps: 10,
-    prompt: `Mode: Act. Besides reading, you can change the layout and type into terminals with the action tools. The user approves every action before it runs. A denied action returns "User denied this action.": don't retry it, adapt or ask.
+    prompt: `Mode: Act. Besides reading, you can change the layout, type into terminals and manage tasks, sessions, panels and settings with the action tools. The user approves every action before it runs, except creating and editing tasks. A denied action returns "User denied this action.": don't retry it, adapt or ask.
 
 ${ACTION_RULES}`,
   },
@@ -75,9 +75,9 @@ ${ACTION_RULES}`,
     disclaimer: "Acts without asking. Can make mistakes.",
     unlocked: (s) => s.assistantAllowAct && s.assistantAllowAuto,
     actions: true,
-    autoTiers: ["layout", "input"],
+    autoTiers: ["layout", "input", "tasks", "sessions", "ui"],
     maxSteps: 10,
-    prompt: `Mode: Auto. Besides reading, you can change the layout and type into terminals with the action tools. Actions run right away, except risky ones, which wait for the user's approval. A denied action returns "User denied this action.": don't retry it, adapt or ask.
+    prompt: `Mode: Auto. Besides reading, you can change the layout, type into terminals and manage tasks, sessions, panels and settings with the action tools. Actions run right away, except risky ones and every setting change, which wait for the user's approval. A denied action returns "User denied this action.": don't retry it, adapt or ask.
 
 ${ACTION_RULES}`,
   },

@@ -26,7 +26,7 @@ import {
   type Scope,
 } from "./agentsData";
 import { Conversation, type ActionStep } from "./agentsAssistant";
-import type { ActionHost, ActionPlan } from "./agentsActions";
+import { paneState, type ActionHost, type ActionPlan } from "./agentsActions";
 import { MODES, effectiveMode, isModeUnlocked, type ModeDef } from "./agentsModes";
 import {
   cardSummary,
@@ -80,6 +80,18 @@ const TOOL_ICON: Record<string, IconName> = {
   rename_pane: "pencil",
   run_command: "play",
   prompt_agent: "paperPlane",
+  notify_when_done: "bell",
+  list_sessions: "search",
+  list_tasks: "search",
+  usage_stats: "info",
+  get_settings: "info",
+  create_task: "plusSquare",
+  update_task: "pencil",
+  create_session: "plusSquare",
+  update_session: "pencil",
+  switch_session: "crosshair",
+  toggle_panel: "cornersOut",
+  set_setting: "pencil",
 };
 
 /** A step label, with `code` spans rendered as code. */
@@ -978,24 +990,87 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     entry.settle(e.key === "Enter");
   });
 
-  async function send(text: string): Promise<void> {
+  // ------------------------------------------------------------ watches
+
+  /** Terminals the assistant asked to hear back about (notify_when_done). */
+  const watches = new Map<string, { title: string; note: string; at: number; busy: boolean; quiet: number }>();
+  let watchTimer: number | null = null;
+  let watchChecking = false;
+  const WATCH_TICK_MS = 1500;
+  const MAX_WATCHES = 8;
+  /** A terminal never seen busy only counts as finished after this long, so a
+   *  command that hasn't visibly started yet isn't reported as done. */
+  const WATCH_GRACE_MS = 5000;
+
+  function addWatch(paneId: string, note: string): string | null {
+    if (!watches.has(paneId) && watches.size >= MAX_WATCHES) return `already watching ${MAX_WATCHES} terminals.`;
+    watches.set(paneId, { title: panes.get(paneId)?.title ?? refOf(paneId), note, at: Date.now(), busy: false, quiet: 0 });
+    watchTimer ??= window.setInterval(() => void checkWatches(), WATCH_TICK_MS);
+    return null;
+  }
+
+  function clearWatches(): void {
+    watches.clear();
+    if (watchTimer !== null) window.clearInterval(watchTimer);
+    watchTimer = null;
+  }
+
+  async function checkWatches(): Promise<void> {
+    if (watchChecking) return;
+    watchChecking = true;
+    try {
+      for (const [id, w] of [...watches]) {
+        const state = await paneState(id);
+        if (!watches.has(id)) continue;
+        if (state === "busy") {
+          w.busy = true;
+          w.quiet = 0;
+          continue;
+        }
+        if (state !== "gone" && !w.busy && Date.now() - w.at < WATCH_GRACE_MS) continue;
+        // Two quiet checks in a row: a prompt redraw between commands isn't "done".
+        if (state === "done" && ++w.quiet < 2) continue;
+        if (conversation.running) continue; // delivered on a later tick
+        watches.delete(id);
+        const what = state === "gone" ? "was closed" : state === "waiting" ? "is now waiting on the user" : "has finished";
+        const label = `${w.title} ${state === "gone" ? "was closed" : state === "waiting" ? "needs you" : "finished"}`;
+        void send(
+          `[Automatic notification, not typed by the user] ${refOf(id)} "${w.title}" ${what}.${w.note ? ` Your note: ${w.note}.` : ""}${
+            state === "gone" ? "" : " Its latest output is attached."
+          } Tell the user the actual result now (the agent's answer, the outcome, any error), not just that it finished, then carry on with anything you planned for this moment.`,
+          { paneId: state === "gone" ? null : id, label }
+        );
+      }
+    } finally {
+      watchChecking = false;
+      if (!watches.size) clearWatches();
+    }
+  }
+
+  /** `notice` marks a turn started by a watch rather than by the user: it
+   *  shows as a step line and leaves the composer alone. */
+  async function send(text: string, notice?: { paneId: string | null; label: string }): Promise<void> {
     const q = text.trim();
     if (!q || conversation.running) return;
     if (!store.state.settings.openrouterApiKey.trim()) return;
     if (thread.querySelector(".ap-welcome")) thread.innerHTML = "";
-    history.unshift(q);
-    historyIdx = -1;
 
-    const sentAttached = [...attached];
-    attached = [];
-    input.value = "";
-    autosize();
-    render();
-    updatePlaceholder();
+    const sentAttached = notice ? (notice.paneId ? [notice.paneId] : []) : [...attached];
+    if (!notice) {
+      history.unshift(q);
+      historyIdx = -1;
+      attached = [];
+      input.value = "";
+      autosize();
+      render();
+      updatePlaceholder();
+    }
 
     const userEl = document.createElement("div");
-    userEl.className = "ap-msg user";
-    userEl.innerHTML = `${
+    userEl.className = notice ? "ap-msg ai" : "ap-msg user";
+    userEl.innerHTML = notice
+      ? `<div class="ap-steps"><div class="ap-step">${icon("bell", 12)}<span>${esc(notice.label)}</span></div></div>`
+      : `${
       sentAttached.length
         ? `<div class="ap-msg-refs">${sentAttached
             .map((id) => `<button class="ap-ref" data-pane="${esc(id)}">${esc(panes.get(id)?.title ?? refOf(id))}</button>`)
@@ -1032,6 +1107,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
           steps.append(step);
           scrollToEnd();
         },
+        watch: addWatch,
         requestApproval: (plan, signal) => requestApproval(plan, signal, steps),
         onAction: (plan, step) => showAction(plan, step, steps),
       });
@@ -1051,7 +1127,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
         userEl.remove();
         aiEl.remove();
         attached = sentAttached.filter((id) => panes.has(id));
-        void send(q);
+        void send(q, notice);
       });
     } finally {
       setRunning(false);
@@ -1133,6 +1209,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
   $(".ap-close").addEventListener("click", () => setOpen(false));
   $(".ap-new-chat").addEventListener("click", () => {
     conversation.reset();
+    clearWatches();
     renderEmptyThread();
     updateSpend();
     input.focus();
