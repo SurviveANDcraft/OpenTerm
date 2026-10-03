@@ -921,13 +921,27 @@ fn delete_path(path: String) -> Result<(), String> {
 /// — so it still sounds when the window is minimized or unfocused.
 static ATTENTION_SOUND: &[u8] = include_bytes!("../sounds/attention.wav");
 
+/// The built-in chime presets selectable in Settings. An unknown or missing
+/// preset name is the classic chime.
+fn preset_sound(preset: Option<&str>) -> &'static [u8] {
+    match preset {
+        Some("glass") => include_bytes!("../sounds/glass.wav"),
+        Some("mallet") => include_bytes!("../sounds/mallet.wav"),
+        Some("halo") => include_bytes!("../sounds/halo.wav"),
+        Some("dot") => include_bytes!("../sounds/dot.wav"),
+        Some("duo") => include_bytes!("../sounds/duo.wav"),
+        Some("pluck") => include_bytes!("../sounds/pluck.wav"),
+        _ => ATTENTION_SOUND,
+    }
+}
+
 /// Plays the attention chime. If `path` names a readable, decodable audio
 /// file, that's played instead of the built-in chime — this is how a user's
 /// custom sound (picked in Settings) takes over. Any failure to read/decode
-/// the custom file silently falls back to the built-in chime, so a moved or
+/// the custom file silently falls back to the built-in `preset`, so a moved or
 /// deleted custom file never leaves the user without a notification sound.
 #[tauri::command]
-fn play_attention_sound(path: Option<String>) {
+fn play_attention_sound(path: Option<String>, preset: Option<String>) {
     thread::spawn(move || {
         let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
             return;
@@ -941,7 +955,8 @@ fn play_attention_sound(path: Option<String>) {
         match custom_bytes.and_then(|bytes| rodio::Decoder::new(std::io::Cursor::new(bytes)).ok()) {
             Some(source) => sink.append(source),
             None => {
-                let Ok(fallback) = rodio::Decoder::new(std::io::Cursor::new(ATTENTION_SOUND)) else {
+                let builtin = preset_sound(preset.as_deref());
+                let Ok(fallback) = rodio::Decoder::new(std::io::Cursor::new(builtin)) else {
                     return;
                 };
                 sink.append(fallback);

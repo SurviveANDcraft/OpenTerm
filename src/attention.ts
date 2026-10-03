@@ -1133,7 +1133,7 @@ export function playAttentionChime(): void {
   const now = Date.now();
   if (now - lastSoundAt < SOUND_COOLDOWN_MS) return;
   lastSoundAt = now;
-  void invoke("play_attention_sound", { path: store.state.settings.soundPath });
+  invokeChime();
 }
 
 function playChime(): void {
@@ -1141,5 +1141,10 @@ function playChime(): void {
   const now = Date.now();
   if (now - lastSoundAt < SOUND_COOLDOWN_MS) return;
   lastSoundAt = now;
-  void invoke("play_attention_sound", { path: store.state.settings.soundPath });
+  invokeChime();
+}
+
+function invokeChime(): void {
+  const { soundPath, soundPreset } = store.state.settings;
+  void invoke("play_attention_sound", { path: soundPath, preset: soundPreset });
 }

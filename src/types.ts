@@ -571,8 +571,10 @@ export interface Settings {
   sidebarVisible: boolean;
   sidebarWidth: number;
   soundNotifications: boolean;
+  /** Which built-in chime to play. */
+  soundPreset: SoundPreset;
   /** Path to a custom sound file to play instead of the built-in chime.
-   *  `null` means use the default OpenTerm chime. */
+   *  `null` means use the `soundPreset` chime. */
   soundPath: string | null;
   /** When an app restart replays a remembered agent CLI (e.g. `claude`), resume
    *  its previous conversation (append `--continue`) instead of starting fresh. */
@@ -648,6 +650,19 @@ export const SIDEBAR_WIDTH_MAX = 420;
 export const AGENTS_PANEL_WIDTH_MIN = 280;
 export const AGENTS_PANEL_WIDTH_MAX = 600;
 
+/** The built-in attention chimes, in the order Settings lists them. */
+export const SOUND_PRESETS = [
+  { value: "classic", label: "Classic" },
+  { value: "glass", label: "Glass" },
+  { value: "mallet", label: "Mallet" },
+  { value: "halo", label: "Halo" },
+  { value: "dot", label: "Dot (short)" },
+  { value: "duo", label: "Duo (short)" },
+  { value: "pluck", label: "Pluck (short)" },
+] as const;
+
+export type SoundPreset = (typeof SOUND_PRESETS)[number]["value"];
+
 export const DEFAULT_SETTINGS: Settings = {
   theme: "openterm",
   fontSize: 14,
@@ -662,6 +677,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarVisible: true,
   sidebarWidth: 224,
   soundNotifications: true,
+  soundPreset: "classic",
   soundPath: null,
   resumeAgentSessions: true,
   shellIntegration: true,

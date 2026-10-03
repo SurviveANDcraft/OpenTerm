@@ -2820,14 +2820,11 @@ body.ext-dragging .drop-hint[class*="region-"] {
   min-width: 0;
 }
 
-.sound-path-label {
+.field .sound-preset-select {
   flex: 1;
   min-width: 0;
-  font: 12.5px var(--mono);
-  color: var(--text-dim);
-  overflow: hidden;
+  width: auto;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .path-wrap input {

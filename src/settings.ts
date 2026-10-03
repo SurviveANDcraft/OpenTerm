@@ -9,6 +9,7 @@ import {
   openTaskCount,
   Session,
   Settings,
+  SOUND_PRESETS,
 } from "./types";
 import { collectLeaves } from "./tree";
 import { cancelRecording, chordFromEvent, prettyChord, recorder } from "./keybinds";
@@ -1680,11 +1681,35 @@ export function createSettingsView(handlers: SettingsHandlers) {
 
     const soundPathWrap = document.createElement("div");
     soundPathWrap.className = "path-wrap";
-    const soundPathLabel = document.createElement("span");
-    soundPathLabel.className = "sound-path-label";
-    soundPathLabel.textContent = s.soundPath ? s.soundPath.split(/[\\/]/).pop()! : "Default chime";
-    soundPathLabel.title = s.soundPath ?? "Default chime";
-    const soundBrowseBtn = btn("btn-secondary", "Choose…", async () => {
+    // Built-in presets, plus the custom file (when one is picked) as its own
+    // entry. Choosing a preset drops the custom file and previews the chime.
+    const CUSTOM_SOUND = "__custom__";
+    const soundSelect = document.createElement("select");
+    soundSelect.className = "sound-preset-select";
+    for (const { value, label } of SOUND_PRESETS) {
+      const o = document.createElement("option");
+      o.value = value;
+      o.textContent = label;
+      soundSelect.appendChild(o);
+    }
+    if (s.soundPath) {
+      const o = document.createElement("option");
+      o.value = CUSTOM_SOUND;
+      o.textContent = `Custom: ${s.soundPath.split(/[\\/]/).pop()!}`;
+      soundSelect.appendChild(o);
+      soundSelect.title = s.soundPath;
+    }
+    soundSelect.value = s.soundPath ? CUSTOM_SOUND : s.soundPreset;
+    soundSelect.addEventListener("change", () => {
+      const preset = SOUND_PRESETS.find((p) => p.value === soundSelect.value);
+      if (!preset) return;
+      s.soundPreset = preset.value;
+      s.soundPath = null;
+      markDirty();
+      render();
+      void invoke("play_attention_sound", { path: null, preset: preset.value });
+    });
+    const soundBrowseBtn = btn("btn-secondary", "Custom…", async () => {
       const file = await openFileDialog({
         title: "Custom attention sound",
         filters: [{ name: "Audio", extensions: ["wav", "mp3", "ogg", "flac"] }],
@@ -1695,20 +1720,14 @@ export function createSettingsView(handlers: SettingsHandlers) {
         render();
       }
     });
-    const soundResetBtn = btn("btn-ghost", "Use default", () => {
-      s.soundPath = null;
-      markDirty();
-      render();
-    });
-    soundResetBtn.hidden = !s.soundPath;
     const soundTestBtn = btn("btn-ghost", "▶ Play", () => {
-      void invoke("play_attention_sound", { path: s.soundPath });
+      void invoke("play_attention_sound", { path: s.soundPath, preset: s.soundPreset });
     });
-    soundPathWrap.append(soundPathLabel, soundBrowseBtn, soundResetBtn, soundTestBtn);
+    soundPathWrap.append(soundSelect, soundBrowseBtn, soundTestBtn);
 
     const soundField = field("Sound", soundPathWrap, {
-      desc: "Pick your own audio file, or keep the built-in chime.",
-      keywords: "custom audio chime wav mp3",
+      desc: "Pick one of the built-in chimes, or use your own audio file.",
+      keywords: "custom audio chime preset wav mp3 glass mallet halo dot duo pluck classic",
     });
     soundField.classList.toggle("is-disabled", !s.soundNotifications);
 
