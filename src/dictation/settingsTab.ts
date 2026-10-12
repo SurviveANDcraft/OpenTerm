@@ -1199,8 +1199,8 @@ export function createDictationTab(ctx: DictationTabContext) {
       ),
       ui.field("Vocabulary", vocabularyControl(), {
         stack: true,
-        desc: "Names and terms to expect. These are hints, so a long list is fine.",
-        keywords: "vocabulary words phrases names terms",
+        desc: "Names and terms to expect. These are hints, so a long list is fine. The voice assistant uses them too.",
+        keywords: "vocabulary words phrases names terms voice assistant",
       }),
     ], { keywords: "language accuracy transcription" });
   }

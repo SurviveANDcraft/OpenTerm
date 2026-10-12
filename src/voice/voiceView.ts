@@ -463,7 +463,7 @@ export function createVoiceView(deps: VoiceDeps) {
         model: s.voiceModel.trim() || DEFAULT_LIVE_MODEL,
         voice: s.voiceName || DEFAULT_VOICE,
         setup: (fresh) => ({
-          system: voiceSystemPrompt(mode, terminalsSnapshot(scope), fresh ? recap() : ""),
+          system: voiceSystemPrompt(mode, terminalsSnapshot(scope), fresh ? recap() : "", s.dictation.vocabulary),
           tools: voiceTools(toolDefsFor(mode, can)),
         }),
       },

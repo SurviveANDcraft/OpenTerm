@@ -47,10 +47,16 @@ You can also see and, when the mode allows, manage the app itself: each session'
 Every command you run and every prompt you send to an agent is watched automatically. When that terminal finishes you get a message starting with "[Automatic notification]", with its output attached. The user did not say that message: it is the app talking to you. So after starting something, never wait, poll or guess the result. Say you'll let them know when it's done. When the notification arrives, tell the user the actual result in a sentence or two: the agent's answer, the command's outcome, the error. Never just say "it finished". If the attached output isn't enough, read the terminal first. Pass notify: false only when the result truly doesn't matter. For a terminal you didn't start, when the user says something like "tell me when that one is done", call notify_when_done.`;
 
 /** The full system text for one connection. `recap` carries the conversation
- *  so far when a reconnect couldn't resume it on the server. */
-export function voiceSystemPrompt(mode: ModeDef, snapshot: string, recap: string): string {
+ *  so far when a reconnect couldn't resume it on the server. `vocabulary` is
+ *  the dictation word list: Gemini Live accepts `customVocabulary` in the setup
+ *  message but ignores it on the live models, while naming the words here does
+ *  change what the model understands. */
+export function voiceSystemPrompt(mode: ModeDef, snapshot: string, recap: string, vocabulary: string[]): string {
   return [
     VOICE_PROMPT,
+    vocabulary.length
+      ? `# Words to expect\nThe user often says these names and terms. When something you hear sounds like one of them, that is what they said: ${vocabulary.join(", ")}.`
+      : "",
     `# Mode\n${mode.prompt}`,
     recap
       ? `# Conversation so far\nThe connection dropped and was restored. This is what was said before; carry on from it without mentioning the drop.\n${recap}`
