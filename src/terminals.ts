@@ -562,6 +562,8 @@ export class PaneTerm {
     // ---- clipboard (Windows Terminal semantics) ----
     // Returning false keeps the key out of the PTY. Everything else falls
     // through to xterm, so Ctrl+C with no selection is still a plain SIGINT.
+    // Paste isn't here: it's a rebindable action (`paste`), dispatched by the
+    // app's keydown handler before the key gets this far.
     this.term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown" || !e.ctrlKey || e.altKey || e.metaKey) return true;
       const k = e.key.toLowerCase();
@@ -575,11 +577,6 @@ export class PaneTerm {
         // No selection: plain Ctrl+C is a SIGINT, Ctrl+Shift+C is a no-op.
         if (!e.shiftKey) return true;
         e.preventDefault();
-        return false;
-      }
-      if (e.shiftKey && k === "v") {
-        e.preventDefault();
-        void this.paste();
         return false;
       }
       return true;

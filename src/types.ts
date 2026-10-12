@@ -452,6 +452,7 @@ export const ACTIONS = {
   openInbox: "Open inbox",
   toggleAgents: "Toggle Agents panel",
   restoreLast: "Undo last close (session, pane or task)",
+  paste: "Paste",
 } as const;
 
 export type Action = keyof typeof ACTIONS;
@@ -490,6 +491,9 @@ export const DEFAULT_KEYBINDS: Record<Action, string> = {
   openInbox: "Ctrl+Shift+I",
   toggleAgents: "Ctrl+Shift+A",
   restoreLast: "Ctrl+Shift+U",
+  // Last on purpose: a saved setup that already gave Ctrl+Shift+V to another
+  // action keeps that action, since the first match wins (see actionForChord).
+  paste: "Ctrl+Shift+V",
 };
 
 export type DictationPosition =

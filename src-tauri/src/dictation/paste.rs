@@ -25,6 +25,8 @@ pub struct Target {
     /// Friendly app name for History ("Windows Terminal").
     pub app: Option<String>,
     pub terminal: bool,
+    /// The window is OpenTerm itself, which has its own paste shortcut.
+    pub openterm: bool,
     /// Agent CLI that owns the paste in this window, if we can tell.
     pub agent: Option<&'static str>,
     /// False for elevated windows (Windows drops our input) and for no window.
@@ -73,14 +75,14 @@ pub fn inspect_foreground(focused_agent: Option<&'static str>) -> Target {
 pub fn inspect_origin(origin: &Origin) -> Target {
     let h = hwnd_of(origin.hwnd);
     if !unsafe { IsWindow(Some(h)) }.as_bool() {
-        return Target { app: None, terminal: false, agent: None, pasteable: false };
+        return Target { app: None, terminal: false, openterm: false, agent: None, pasteable: false };
     }
     inspect(h, origin.agent)
 }
 
 fn inspect(h: HWND, focused_agent: Option<&'static str>) -> Target {
     if h.0.is_null() {
-        return Target { app: None, terminal: false, agent: None, pasteable: false };
+        return Target { app: None, terminal: false, openterm: false, agent: None, pasteable: false };
     }
     let class = crate::window_class(h);
     let exe = crate::process_image_name(h);
@@ -100,6 +102,7 @@ fn inspect(h: HWND, focused_agent: Option<&'static str>) -> Target {
     Target {
         app: exe.as_deref().map(friendly_name),
         terminal,
+        openterm: exe.as_deref() == Some("openterm.exe"),
         agent,
         pasteable: !shell && (!is_elevated_window(h) || self_elevated()),
     }
@@ -317,12 +320,17 @@ pub fn wait_keys_up(timeout: Duration) -> bool {
 
 /// The agent CLIs that read a paste off Ctrl+Shift+V. Claude Code, Codex and
 /// opencode all accept it; everything else gets the standard Ctrl+V, which is
-/// also the right fallback for a terminal we can't identify.
+/// also the right fallback for a terminal we can't identify. In OpenTerm that
+/// paste is the app's own shortcut, which the user can rebind: `own_chord` is
+/// what it's set to now.
 const CHORD_AGENTS: &[&str] = &["claude-code", "codex", "opencode"];
 
-pub fn paste(agent: Option<&str>) {
+pub fn paste(agent: Option<&str>, own_chord: Option<hotkey::Chord>) {
     if agent.is_some_and(|a| CHORD_AGENTS.contains(&a)) {
-        hotkey::send_paste_chord(&[hotkey::VK_CONTROL, hotkey::VK_SHIFT], hotkey::VK_V);
+        match own_chord {
+            Some(chord) => hotkey::send_chord(chord),
+            None => hotkey::send_paste_chord(&[hotkey::VK_CONTROL, hotkey::VK_SHIFT], hotkey::VK_V),
+        }
     } else {
         hotkey::send_paste_chord(&[hotkey::VK_CONTROL], hotkey::VK_V);
     }

@@ -368,6 +368,16 @@ pub fn send_paste_chord(mods: &[u16], key: u16) {
     unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }
 
+/// Same, for a chord parsed from a settings string.
+pub fn send_chord(chord: Chord) {
+    let mods: Vec<u16> = [(M_CTRL, VK_CONTROL), (M_ALT, 0x12), (M_SHIFT, VK_SHIFT), (M_WIN, VK_LWIN as u16)]
+        .into_iter()
+        .filter(|(bit, _)| chord.mods & bit != 0)
+        .map(|(_, vk)| vk)
+        .collect();
+    send_paste_chord(&mods, chord.key as u16);
+}
+
 /// Installs the hook on a dedicated thread with its own message pump
 /// (low-level hooks are called on the installing thread's loop).
 pub fn install(tx: Sender<Msg>) {

@@ -800,7 +800,7 @@ fn deliver(cfg: &Config, store: &Store, rec: Recording, origin: Option<paste::Or
     } else if !reachable {
         Some("Copied · where you dictated is gone")
     } else if target.pasteable && paste::wait_keys_up(Duration::from_secs(3)) {
-        paste::paste(target.agent);
+        paste::paste(target.agent, target.openterm.then(|| store.paste_chord()).flatten());
         Some("Pasted")
     } else {
         Some("Copied · Ctrl+V to paste")

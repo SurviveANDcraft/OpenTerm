@@ -100,15 +100,23 @@ impl Store {
     }
 
     /// Agent CLI and pane id of OpenTerm's focused pane. The file holds
-    /// "<agent>\t<pane id>"; older builds wrote the agent alone, which still
-    /// parses (with no pane).
+    /// "<agent>\t<pane id>\t<paste chord>"; older builds wrote the agent
+    /// alone, which still parses (with no pane).
     pub fn focused_pane(&self) -> (Option<&'static str>, Option<String>) {
         let Ok(raw) = std::fs::read_to_string(self.dir.join(FOCUSED_AGENT_FILE)) else {
             return (None, None);
         };
-        let (agent, pane) = raw.split_once('\t').unwrap_or((raw.as_str(), ""));
-        let pane = pane.trim();
+        let mut fields = raw.split('\t');
+        let agent = fields.next().unwrap_or("");
+        let pane = fields.next().unwrap_or("").trim();
         (super::paste::parse_agent(agent), (!pane.is_empty()).then(|| pane.to_string()))
+    }
+
+    /// OpenTerm's own paste shortcut, as last published by the app. None when
+    /// it is unset or isn't a chord we can press.
+    pub fn paste_chord(&self) -> Option<super::hotkey::Chord> {
+        let raw = std::fs::read_to_string(self.dir.join(FOCUSED_AGENT_FILE)).ok()?;
+        super::hotkey::parse_chord(raw.split('\t').nth(2)?).filter(|c| !c.modifier_only())
     }
 
     /// Asks the main app (which watches for this) to focus a pane. Paired
@@ -334,6 +342,15 @@ mod tests {
         // Older builds wrote the agent alone.
         write("codex");
         assert_eq!(store.focused_pane(), (Some("codex"), None));
+        assert_eq!(store.paste_chord(), None);
+        // The paste shortcut rides along as a third field.
+        write("codex\tp-5\tCtrl+Alt+P");
+        assert_eq!(store.focused_pane(), (Some("codex"), Some("p-5".to_string())));
+        let chord = store.paste_chord().unwrap();
+        assert_eq!((chord.mods, chord.key), (1 | 2, 0x50));
+        // Unbound.
+        write("codex\tp-5\t");
+        assert_eq!(store.paste_chord(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

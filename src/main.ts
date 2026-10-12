@@ -73,6 +73,7 @@ import {
 } from "./browserPanes";
 import { applyFold, applyZoom, renderSession, setFoldGapHandler, syncSizes } from "./layout";
 import { listen } from "@tauri-apps/api/event";
+import { pasteText } from "./clipboard";
 import { onPtyExit, onPtyOutput, paneLastSession, writePty } from "./pty";
 import {
   feedPaneOutput,
@@ -1534,15 +1535,16 @@ function rerender(session: Session): void {
 const paneHarness = new Map<string, string>();
 let publishedAgent: string | null = null;
 
-/** Tells the dictation agent which CLI owns the focused pane and which pane it
- *  is, as "<agent>\t<pane id>": the agent CLIs take a paste on Ctrl+Shift+V
- *  rather than Ctrl+V, and the pane id lets dictation notice when a transcript
- *  would land somewhere other than where it was dictated. Written on change. */
+/** Tells the dictation agent which CLI owns the focused pane, which pane it
+ *  is and what the paste shortcut is, as "<agent>\t<pane id>\t<chord>": an
+ *  agent CLI can't take a paste on Ctrl+V, so dictation presses our own paste
+ *  shortcut instead, and the pane id lets it notice when a transcript would
+ *  land somewhere other than where it was dictated. Written on change. */
 function publishFocusedAgent(): void {
   const s = activeSession();
   const focused = s ? focusedPane.get(s.id) : undefined;
   const agent = (focused && paneHarness.get(focused)) || "";
-  const payload = `${agent}\t${focused ?? ""}`;
+  const payload = `${agent}\t${focused ?? ""}\t${store.state.settings.keybinds.paste}`;
   if (payload === publishedAgent) return;
   publishedAgent = payload;
   void invoke("dictation_set_focused_agent", { agent: payload }).catch(() => {});
@@ -2223,6 +2225,7 @@ function applySettingsLive(): void {
   syncAllExternal();
   updateChrome();
   agentsPanel.refreshSettings();
+  publishFocusedAgent(); // the paste shortcut may have changed
   store.save();
 }
 
@@ -2605,7 +2608,39 @@ function runAction(action: Action, e?: KeyboardEvent): void {
     case "restoreLast":
       trash.restore();
       break;
+    case "paste":
+      pasteAtFocus();
+      break;
   }
+}
+
+/** Chords the webview already pastes on by itself inside a text field. */
+const NATIVE_PASTE_CHORDS = new Set(["Ctrl+V", "Ctrl+Shift+V"]);
+
+/** The text field or editor holding focus, if any. A terminal's hidden input
+ *  doesn't count: its pastes go to the PTY. */
+function focusedTextField(): Element | null {
+  const el = document.activeElement;
+  if (!el || el.classList.contains("xterm-helper-textarea")) return null;
+  return el.closest("input, textarea, [contenteditable='true'], .cm-content");
+}
+
+/** The `paste` action: the clipboard goes to the terminal being typed in, or
+ *  into the text field that has focus when the shortcut is one the webview
+ *  wouldn't paste on by itself. */
+function pasteAtFocus(): void {
+  const field = focusedTextField();
+  if (field) {
+    void pasteText().then((text) => {
+      if (text && focusedTextField() === field) document.execCommand("insertText", false, text);
+    });
+    return;
+  }
+  const session = activeSession();
+  const id =
+    document.activeElement?.closest<HTMLElement>(".pane")?.dataset.paneId ??
+    (session ? focusedPane.get(session.id) : undefined);
+  if (id) void panes.get(id)?.paste();
 }
 
 /** Narrowest sidebar where the "New session <kbd>" + "+" row still fits on one
@@ -3333,6 +3368,7 @@ function runEditorEscapeHatch(e: KeyboardEvent): void {
   if (!chord || EDITOR_OWNED_CHORDS.has(chord)) return;
   const action = actionForChord(store.state.settings.keybinds, chord);
   if (!action) return;
+  if (action === "paste" && NATIVE_PASTE_CHORDS.has(chord)) return;
   e.preventDefault();
   e.stopPropagation();
   runAction(action, e);
@@ -3475,6 +3511,9 @@ window.addEventListener(
       document.activeElement instanceof HTMLInputElement ||
       document.activeElement instanceof HTMLSelectElement;
     if (inInput && !e.ctrlKey && !e.altKey && !e.metaKey && !/^F\d+$/.test(e.key)) return;
+    // In a text field the webview's own paste does the job better (files and
+    // images included), so its chords stay with it there.
+    if (action === "paste" && NATIVE_PASTE_CHORDS.has(chordNow!) && focusedTextField()) return;
     e.preventDefault();
     e.stopPropagation();
     runAction(action, e);
