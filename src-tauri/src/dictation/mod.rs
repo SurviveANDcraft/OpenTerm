@@ -11,7 +11,8 @@
 //! few actions Settings sends over.
 //!
 //! State machine: Idle → Arming → Recording → Busy (transcribe, polish,
-//! deliver) → Idle, with cancel possible from Arming and Recording.
+//! deliver) → Idle, with cancel possible from Arming and Recording (Esc) and
+//! from Busy (Esc twice).
 
 pub mod audio;
 mod encode;
@@ -30,6 +31,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, RunEvent, Wry};
@@ -61,6 +63,9 @@ const ARM_DELAY: Duration = Duration::from_millis(120);
 const MIN_HOLD: Duration = Duration::from_millis(300);
 /// Cancelled recordings shorter than this aren't worth keeping.
 const MIN_UNSENT_MS: u64 = 1000;
+/// How long the first Esc of a transcription stays armed, waiting for the
+/// second. One Esc alone is too easy to hit by habit to throw a transcript away.
+const ESC_CONFIRM: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -143,6 +148,8 @@ pub enum Msg {
 pub enum Outcome {
     Delivered(&'static str),
     NothingHeard,
+    /// The user called the transcription off.
+    Cancelled,
     /// Short reason; the recording went to Unsent.
     Unsent(String),
     Failed(String),
@@ -315,7 +322,9 @@ enum Phase {
     Idle,
     Arming { pressed: Instant, capture: Capture, released: bool },
     Recording { pressed: Instant, capture: Capture },
-    Busy,
+    /// `cancel` calls the job off and is spent once used; `esc` is when the
+    /// first of the two Esc presses came.
+    Busy { cancel: Option<oneshot::Sender<()>>, esc: Option<Instant> },
 }
 
 struct Agent {
@@ -387,6 +396,7 @@ impl Agent {
         let phase = match &self.phase {
             Phase::Arming { pressed, .. } => Some(*pressed + self.arm_delay()),
             Phase::Recording { pressed, .. } => Some(*pressed + Duration::from_secs(self.s().max_seconds.clamp(60, 900) as u64)),
+            Phase::Busy { esc, .. } => esc.map(|first| first + ESC_CONFIRM),
             _ => None,
         };
         match (phase, self.suspended_until) {
@@ -407,6 +417,13 @@ impl Agent {
         if self.suspended_until.is_some_and(|t| Instant::now() >= t) {
             self.suspended_until = None;
             self.apply_hook_state();
+        }
+        if let Phase::Busy { esc, .. } = &mut self.phase {
+            // The second Esc never came: back to the plain working pill.
+            if esc.is_some_and(|first| first.elapsed() >= ESC_CONFIRM) {
+                *esc = None;
+                overlay::clear_hint();
+            }
         }
         match &self.phase {
             Phase::Arming { pressed, .. } if pressed.elapsed() >= self.arm_delay() => self.enter_recording(),
@@ -464,12 +481,19 @@ impl Agent {
                 }
             }
             Msg::JobDone(outcome) => {
-                if matches!(self.phase, Phase::Busy) {
+                if matches!(self.phase, Phase::Busy { .. }) {
                     self.phase = Phase::Idle;
+                    hotkey::set_active(false);
                 }
                 let (style, pos) = (self.s().style.clone(), self.s().position.clone());
                 match outcome {
                     Outcome::Delivered(label) => overlay::done(&style, &pos, label),
+                    Outcome::Cancelled => {
+                        overlay::cancel();
+                        if self.s().start_sound {
+                            sound::play(sound::Cue::Cancel);
+                        }
+                    }
                     Outcome::NothingHeard => overlay::notice(&pos, "Didn't catch that", "info", ClickAction::None),
                     Outcome::Unsent(reason) => {
                         // A rate limit is the one failure the user can simply
@@ -553,6 +577,7 @@ impl Agent {
             // Ctrl+Win+D and friends: a native shortcut, not dictation.
             (Event::OtherKey, Phase::Arming { .. }) | (Event::Escape, Phase::Arming { .. }) => self.discard(),
             (Event::Escape, Phase::Recording { .. }) => self.cancel(),
+            (Event::Escape, Phase::Busy { .. }) => self.busy_escape(at),
             _ => {}
         }
     }
@@ -642,6 +667,26 @@ impl Agent {
         }
     }
 
+    /// Esc while a transcript is on its way. The first press only asks; a
+    /// second one within `ESC_CONFIRM` calls the job off. The overlay follows
+    /// when the job reports back, so a transcript that lands in the same
+    /// instant is delivered rather than both pasted and "cancelled".
+    fn busy_escape(&mut self, at: Instant) {
+        let Phase::Busy { cancel, esc } = &mut self.phase else { return };
+        if cancel.is_none() {
+            return;
+        }
+        if esc.is_some_and(|first| at.saturating_duration_since(first) < ESC_CONFIRM) {
+            if let Some(cancel) = cancel.take() {
+                let _ = cancel.send(());
+            }
+            *esc = None;
+        } else {
+            *esc = Some(at);
+            overlay::hint("Esc again to cancel");
+        }
+    }
+
     fn finish(&mut self, held: Option<Duration>) {
         let origin = self.origin.take();
         let Phase::Recording { capture, .. } = std::mem::replace(&mut self.phase, Phase::Idle) else {
@@ -663,10 +708,13 @@ impl Agent {
             sound::play(sound::Cue::Stop);
         }
         overlay::thinking(false);
-        self.phase = Phase::Busy;
+        let (cancel, cancelled) = oneshot::channel();
+        self.phase = Phase::Busy { cancel: Some(cancel), esc: None };
+        // Esc stays ours until the job is done: see `busy_escape`.
+        hotkey::set_active(true);
         let (cfg, store, tx) = (self.cfg.clone(), Store::new(self.dir.clone()), self.tx.clone());
         thread::spawn(move || {
-            let outcome = deliver(&cfg, &store, rec, origin);
+            let outcome = deliver(&cfg, &store, rec, origin, cancelled);
             let _ = tx.send(Msg::JobDone(outcome));
         });
     }
@@ -781,12 +829,35 @@ fn resolve_target(cfg: &Config, store: &Store, origin: Option<paste::Origin>) ->
     (paste::inspect_origin(&origin), reachable)
 }
 
-fn deliver(cfg: &Config, store: &Store, rec: Recording, origin: Option<paste::Origin>) -> Outcome {
+/// `cancelled` fires when the user calls the job off. It is only listened to
+/// until the text is in hand: from there the paste is a moment away and goes
+/// through.
+fn deliver(
+    cfg: &Config,
+    store: &Store,
+    rec: Recording,
+    origin: Option<paste::Origin>,
+    cancelled: oneshot::Receiver<()>,
+) -> Outcome {
     let flac = match encode::flac(&rec.samples) {
         Ok(f) => f,
         Err(_) => return Outcome::Failed("Couldn't encode the audio".into()),
     };
-    let (text, t) = match tauri::async_runtime::block_on(transcribe_and_polish(cfg, &flac, rec.duration_ms())) {
+    // Losing the race drops the requests in flight, which closes them.
+    let job = async {
+        tokio::select! {
+            r = transcribe_and_polish(cfg, &flac, rec.duration_ms()) => Some(r),
+            Ok(()) = cancelled => None,
+        }
+    };
+    let Some(result) = tauri::async_runtime::block_on(job) else {
+        // Kept like a cancelled recording, so a slip of the finger loses nothing.
+        if rec.duration_ms() > MIN_UNSENT_MS {
+            save_unsent(store, &rec, "Cancelled", None, true);
+        }
+        return Outcome::Cancelled;
+    };
+    let (text, t) = match result {
         Ok(ok) => ok,
         Err(f) => {
             save_unsent(store, &rec, &f.reason, Some(f.detail), false);

@@ -159,7 +159,8 @@ fn mod_bit(vk: u32) -> u8 {
 static TX: OnceLock<Sender<Msg>> = OnceLock::new();
 static CHORD: AtomicU32 = AtomicU32::new(0);
 static ENABLED: AtomicBool = AtomicBool::new(false);
-/// Arming or recording: Esc belongs to us, and a second press in toggle mode stops.
+/// Arming, recording or transcribing: Esc belongs to us, and a second press
+/// in toggle mode stops.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Chord keys physically held right now (modifier bits + `KEY_BIT`).
 static PHYS_DOWN: AtomicU8 = AtomicU8::new(0);
@@ -243,10 +244,17 @@ fn on_key(st: &mut HookState, vk: u32, down: bool) -> bool {
 }
 
 fn key_down(st: &mut HookState, chord: Chord, enabled: bool, vk: u32, bit: u8) -> bool {
-    if vk == VK_ESCAPE && enabled && ACTIVE.load(Ordering::Relaxed) {
-        st.swallow_esc_up = true;
-        post(Event::Escape);
-        return true;
+    if vk == VK_ESCAPE {
+        // Autorepeat of a press we already took: one press is one event, so
+        // holding Esc can't pass for pressing it twice.
+        if st.swallow_esc_up {
+            return true;
+        }
+        if enabled && ACTIVE.load(Ordering::Relaxed) {
+            st.swallow_esc_up = true;
+            post(Event::Escape);
+            return true;
+        }
     }
     if bit != 0 {
         let repeat = st.down & bit != 0;
@@ -460,5 +468,23 @@ mod tests {
         // Space without the modifiers passes through.
         let mut st = HookState::default();
         assert!(!key_down(&mut st, chord, true, 0x20, 0));
+    }
+
+    #[test]
+    fn a_held_escape_is_swallowed_whole() {
+        let chord = parse_chord("Ctrl+Win").unwrap();
+        let mut st = setup("Ctrl+Win");
+        // Not ours while nothing is in flight.
+        ACTIVE.store(false, Ordering::Relaxed);
+        assert!(!key_down(&mut st, chord, true, VK_ESCAPE, 0));
+        assert!(!key_up(&mut st, chord, true, VK_ESCAPE, 0));
+        // Ours while active, autorepeat and release included, even if the
+        // press itself ended the activity.
+        ACTIVE.store(true, Ordering::Relaxed);
+        assert!(key_down(&mut st, chord, true, VK_ESCAPE, 0));
+        ACTIVE.store(false, Ordering::Relaxed);
+        assert!(key_down(&mut st, chord, true, VK_ESCAPE, 0));
+        assert!(key_up(&mut st, chord, true, VK_ESCAPE, 0));
+        assert!(!key_down(&mut st, chord, true, VK_ESCAPE, 0));
     }
 }

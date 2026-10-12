@@ -43,12 +43,23 @@ struct Shared {
     /// Which window receives level frames right now.
     levels_to: Option<&'static str>,
     click: ClickAction,
+    /// What the job in flight last reported on the working pill.
+    status: String,
+    /// A prompt that covers `status` while it shows ("Esc again to cancel").
+    hint: String,
 }
 
 fn shared() -> &'static Mutex<Shared> {
     static S: OnceLock<Mutex<Shared>> = OnceLock::new();
     S.get_or_init(|| {
-        Mutex::new(Shared { channels: HashMap::new(), theme: None, levels_to: None, click: ClickAction::None })
+        Mutex::new(Shared {
+            channels: HashMap::new(),
+            theme: None,
+            levels_to: None,
+            click: ClickAction::None,
+            status: String::new(),
+            hint: String::new(),
+        })
     })
 }
 
@@ -264,7 +275,12 @@ pub fn begin(style: &str, position: &str, hint: bool, max_seconds: u32) {
     let glow = style == "glow";
     let label = if glow { GLOW } else { PILL };
     let seq = bump(label);
-    shared().lock().unwrap_or_else(|e| e.into_inner()).levels_to = Some(label);
+    {
+        let mut g = shared().lock().unwrap_or_else(|e| e.into_inner());
+        g.levels_to = Some(label);
+        g.status.clear();
+        g.hint.clear();
+    }
     let msg = serde_json::json!({
         "t": "begin", "seq": seq, "anchor": pill_anchor(position), "hint": hint && !glow, "maxSeconds": max_seconds,
     });
@@ -306,14 +322,35 @@ pub fn thinking(polishing: bool) {
 /// A line of text on the working pill ("Rate limited · retrying 2/5"). The
 /// glow style has no surface to write on, so it stays as it is.
 pub fn status(text: &str) {
-    if active_label().is_some() {
-        send_json(PILL, &serde_json::json!({ "t": "status", "text": text }));
-    }
+    shared().lock().unwrap_or_else(|e| e.into_inner()).status = text.to_string();
+    show_status();
 }
 
 /// Back to the plain working pill once the status no longer holds.
 pub fn clear_status() {
     status("");
+}
+
+/// A prompt on the working pill that outranks the job's own status; clearing
+/// it brings that status back.
+pub fn hint(text: &str) {
+    shared().lock().unwrap_or_else(|e| e.into_inner()).hint = text.to_string();
+    show_status();
+}
+
+pub fn clear_hint() {
+    hint("");
+}
+
+fn show_status() {
+    let text = {
+        let g = shared().lock().unwrap_or_else(|e| e.into_inner());
+        if g.levels_to.is_none() {
+            return;
+        }
+        if g.hint.is_empty() { g.status.clone() } else { g.hint.clone() }
+    };
+    send_json(PILL, &serde_json::json!({ "t": "status", "text": text }));
 }
 
 pub fn cancel() {
