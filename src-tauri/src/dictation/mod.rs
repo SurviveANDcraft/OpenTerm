@@ -701,7 +701,11 @@ fn save_unsent(store: &Store, rec: &Recording, reason: &str, detail: Option<Stri
     store.add_unsent(item, &flac);
 }
 
-async fn transcribe_and_polish(cfg: &Config, flac: &[u8]) -> Result<(String, transcribe::Transcript), transcribe::Failure> {
+async fn transcribe_and_polish(
+    cfg: &Config,
+    flac: &[u8],
+    audio_ms: u64,
+) -> Result<(String, transcribe::Transcript), transcribe::Failure> {
     let s = &cfg.settings;
     // Each retry says so on the pill: a silent 15-second wait reads as a hang.
     let on_retry =
@@ -709,6 +713,7 @@ async fn transcribe_and_polish(cfg: &Config, flac: &[u8]) -> Result<(String, tra
     let t = transcribe::transcribe(
         &cfg.api_key,
         flac,
+        Duration::from_millis(audio_ms),
         s.language.as_deref(),
         &s.transcribe_style,
         &s.vocabulary,
@@ -781,7 +786,7 @@ fn deliver(cfg: &Config, store: &Store, rec: Recording, origin: Option<paste::Or
         Ok(f) => f,
         Err(_) => return Outcome::Failed("Couldn't encode the audio".into()),
     };
-    let (text, t) = match tauri::async_runtime::block_on(transcribe_and_polish(cfg, &flac)) {
+    let (text, t) = match tauri::async_runtime::block_on(transcribe_and_polish(cfg, &flac, rec.duration_ms())) {
         Ok(ok) => ok,
         Err(f) => {
             save_unsent(store, &rec, &f.reason, Some(f.detail), false);
@@ -833,7 +838,7 @@ fn retry_unsent(cfg: &Config, store: &Store, id: &str) {
         store.set_unsent_reason(id, "Audio is missing", "The recording's audio file is gone.");
         return;
     };
-    match tauri::async_runtime::block_on(transcribe_and_polish(cfg, &flac)) {
+    match tauri::async_runtime::block_on(transcribe_and_polish(cfg, &flac, item.duration_ms)) {
         Ok((text, _)) if text.is_empty() => {
             store.set_unsent_reason(id, "Nothing was heard", "The transcription came back empty.")
         }

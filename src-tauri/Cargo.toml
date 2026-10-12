@@ -20,8 +20,8 @@ tauri-plugin-single-instance = "2"
 winreg = "0.55"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Already in the tree via tauri; used directly for non-blocking retry backoff.
-tokio = { version = "1", default-features = false, features = ["time"] }
+# Already in the tree via tauri; used directly for retry backoff and racing requests.
+tokio = { version = "1", default-features = false, features = ["time", "macros"] }
 portable-pty = "0.9"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }

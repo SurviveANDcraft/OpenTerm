@@ -2,6 +2,8 @@
 //! The request shape lives only here, so a change on OpenRouter's side is a
 //! one-file fix.
 
+use std::future::Future;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use base64::Engine;
@@ -33,6 +35,66 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Timeouts cost a minute each, and a pill that spins for seven is worse than
 /// an honest error.
 const TOTAL_BUDGET: Duration = Duration::from_secs(150);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// A handshake that hasn't finished by now won't: fail over to the retry.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long an idle connection is kept for the next dictation. Well under
+/// what the server allows, so we rarely write into one it already closed.
+const POOL_IDLE: Duration = Duration::from_secs(300);
+/// The same clip comes back in a second or in thirty, depending on which
+/// backend the request lands on. Past this wait (plus a little per second of
+/// audio, see `hedge_after`) a second request races the first.
+const HEDGE_BASE: Duration = Duration::from_secs(4);
+
+/// One client for the life of the process, so a dictation reuses the last
+/// one's connection instead of opening with a TLS handshake.
+fn client() -> Result<reqwest::Client, Failure> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(c) = CLIENT.get() {
+        return Ok(c.clone());
+    }
+    let c = reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .pool_idle_timeout(POOL_IDLE)
+        .build()
+        .map_err(|e| Failure { reason: "Couldn't start the request".into(), detail: e.to_string() })?;
+    Ok(CLIENT.get_or_init(|| c).clone())
+}
+
+/// When to stop trusting the first request. Long recordings take longer for
+/// real, and a duplicate of one costs as much as the original, so the wait
+/// grows with the audio: 4s for a sentence, 19s for five minutes.
+fn hedge_after(audio: Duration) -> Duration {
+    HEDGE_BASE + audio / 20
+}
+
+/// Runs `first`; if it is still going after `after`, starts `second` beside
+/// it and takes whichever settles. A retryable failure from one waits for the
+/// other, which may still succeed. The loser is dropped, which closes its
+/// connection.
+async fn hedge<A, B>(first: A, second: impl FnOnce() -> B, after: Duration) -> Attempt
+where
+    A: Future<Output = Attempt>,
+    B: Future<Output = Attempt>,
+{
+    let mut first = std::pin::pin!(first);
+    tokio::select! {
+        a = &mut first => return a,
+        _ = tokio::time::sleep(after) => {}
+    }
+    let mut second = std::pin::pin!(second());
+    tokio::select! {
+        a = &mut first => match a {
+            Attempt::Retry { .. } => second.await,
+            a => a,
+        },
+        b = &mut second => match b {
+            Attempt::Retry { .. } => first.await,
+            b => b,
+        },
+    }
+}
 
 enum Attempt {
     Done(Transcript),
@@ -58,10 +120,13 @@ fn backoff(attempt: u32, asked: Option<Duration>) -> Duration {
 }
 
 /// `on_retry(next_attempt, MAX_ATTEMPTS, reason)` fires before each wait, so
-/// the caller can keep the overlay honest about what's happening.
+/// the caller can keep the overlay honest about what's happening. `audio` is
+/// the recording's length. Dropping the returned future abandons every request
+/// in flight.
 pub async fn transcribe(
     api_key: &str,
     flac: &[u8],
+    audio: Duration,
     language: Option<&str>,
     style: &str,
     phrases: &[String],
@@ -95,16 +160,15 @@ pub async fn transcribe(
         body["language"] = serde_json::Value::String(lang.to_string());
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| Failure { reason: "Couldn't start the request".into(), detail: e.to_string() })?;
+    let client = client()?;
+    let request = || attempt(&client, api_key, &body);
+    let hedge_after = hedge_after(audio);
 
     // Rate limits, timeouts, dropped connections and 5xx all clear on their own
     // given a moment; everything else fails the same way however often we ask.
     let started = std::time::Instant::now();
     for n in 1..=MAX_ATTEMPTS {
-        let failure = match attempt(&client, api_key, &body).await {
+        let failure = match hedge(request(), request, hedge_after).await {
             Attempt::Done(t) => return Ok(t),
             Attempt::Fail(f) => return Err(f),
             Attempt::Retry { failure, after } if n < MAX_ATTEMPTS => {
@@ -186,4 +250,81 @@ pub async fn polish(api_key: &str, text: &str, vocabulary: &[String]) -> Option<
         .await
         .ok()
         .filter(|s| !s.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    const SOON: Duration = Duration::from_millis(5);
+    const HEDGE: Duration = Duration::from_millis(40);
+    const NEVER: Duration = Duration::from_secs(30);
+
+    async fn after(wait: Duration, text: &str) -> Attempt {
+        tokio::time::sleep(wait).await;
+        Attempt::Done(Transcript { text: text.into(), cost: None, seconds: None })
+    }
+
+    async fn failing(wait: Duration, retryable: bool) -> Attempt {
+        tokio::time::sleep(wait).await;
+        let failure = Failure { reason: "down".into(), detail: String::new() };
+        if retryable {
+            Attempt::Retry { failure, after: None }
+        } else {
+            Attempt::Fail(failure)
+        }
+    }
+
+    fn text(a: Attempt) -> Option<String> {
+        match a {
+            Attempt::Done(t) => Some(t.text),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_prompt_answer_never_starts_the_second_request() {
+        let started = Cell::new(false);
+        let second = || {
+            started.set(true);
+            after(SOON, "second")
+        };
+        let got = tauri::async_runtime::block_on(hedge(after(SOON, "first"), second, HEDGE));
+        assert_eq!(text(got).as_deref(), Some("first"));
+        assert!(!started.get());
+    }
+
+    #[test]
+    fn a_stalled_request_loses_to_the_second() {
+        let got = tauri::async_runtime::block_on(hedge(after(NEVER, "first"), || after(SOON, "second"), HEDGE));
+        assert_eq!(text(got).as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn a_retryable_failure_waits_for_the_other_request() {
+        // Second fails first, first is still worth waiting for.
+        let got =
+            tauri::async_runtime::block_on(hedge(after(HEDGE * 3, "first"), || failing(SOON, true), HEDGE));
+        assert_eq!(text(got).as_deref(), Some("first"));
+        // And the other way round.
+        let got =
+            tauri::async_runtime::block_on(hedge(failing(HEDGE * 2, true), || after(HEDGE * 2, "second"), HEDGE));
+        assert_eq!(text(got).as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn a_final_failure_ends_the_race() {
+        let got = tauri::async_runtime::block_on(hedge(after(NEVER, "first"), || failing(SOON, false), HEDGE));
+        assert!(matches!(got, Attempt::Fail(_)));
+        // Before the hedge delay, any failure goes straight back to the retry loop.
+        let got = tauri::async_runtime::block_on(hedge(failing(SOON, true), || after(SOON, "second"), HEDGE));
+        assert!(matches!(got, Attempt::Retry { .. }));
+    }
+
+    #[test]
+    fn the_hedge_delay_grows_with_the_audio() {
+        assert_eq!(hedge_after(Duration::ZERO), Duration::from_secs(4));
+        assert_eq!(hedge_after(Duration::from_secs(300)), Duration::from_secs(19));
+    }
 }
