@@ -19,12 +19,19 @@
   position: fixed;
   inset: 0;
   z-index: 106;
+  place-items: center;
+}
+
+/* The scrim lives on its own layer so dragging a task off the card can fade it
+ * by opacity alone; transitioning the blur itself re-renders it over the live
+ * terminals every frame and stutters. */
+.tasks::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   background: color-mix(in srgb, var(--bg-pane) 70%, transparent);
   backdrop-filter: blur(6px) saturate(115%);
-  place-items: center;
-  transition:
-    background-color 200ms var(--ease-out),
-    backdrop-filter 200ms var(--ease-out);
+  transition: opacity 280ms var(--ease-out);
 }
 
 .tasks.visible {
@@ -39,6 +46,7 @@
 }
 
 .tasks-card {
+  position: relative; /* above the scrim layer */
   width: min(1180px, calc(100vw - 64px));
   height: min(780px, calc(100vh - 72px));
   background: var(--bg-sidebar);
@@ -50,8 +58,8 @@
   overflow: hidden;
   animation: tasks-modal-in 240ms var(--ease-out);
   transition:
-    opacity 200ms var(--ease-out),
-    scale 200ms var(--ease-out);
+    opacity 280ms var(--ease-out),
+    scale 320ms var(--ease-out);
 }
 
 @keyframes tasks-modal-in {
@@ -2112,7 +2120,7 @@ body.tasks-dragging .tasks-card2 {
   will-change: translate, transform;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
   opacity: 0.97;
-  transition: box-shadow 160ms ease, opacity 160ms ease, scale 180ms var(--ease-out);
+  transition: box-shadow 200ms ease, opacity 160ms ease, scale 280ms var(--ease-spring);
 }
 
 .tasks-drag-ghost.lifted {
@@ -2151,9 +2159,8 @@ body.tasks-dragging .tasks-card2 {
 
 /* The panel fades back so the workspace shows through, and lets the pointer
  * reach the panes underneath. */
-.tasks.peek {
-  background-color: transparent;
-  backdrop-filter: none;
+.tasks.peek::before {
+  opacity: 0;
 }
 
 .tasks.peek,
@@ -2162,8 +2169,8 @@ body.tasks-dragging .tasks-card2 {
 }
 
 .tasks.peek .tasks-card {
-  opacity: 0.14;
-  scale: 0.985;
+  opacity: 0.12;
+  scale: 0.97;
 }
 
 /* Off the card the clone shrinks into a token held under the cursor (keep the
@@ -2206,16 +2213,23 @@ body.tasks-dragging .tasks-card2 {
   backdrop-filter: blur(10px) saturate(1.2);
   border: 1px solid var(--hairline);
   box-shadow: var(--shadow-2);
+  /* JS places it with `translate`; this centres it on the cursor, and the
+   * origin makes the pop-in grow out of the point under the clone. */
+  transform: translateX(-50%);
+  transform-origin: 0 0;
   opacity: 0;
+  scale: 0.9;
   transition:
-    opacity 160ms var(--ease-out),
-    color 120ms ease,
-    border-color 120ms ease,
-    background-color 120ms ease;
+    opacity 180ms var(--ease-out),
+    scale 260ms var(--ease-spring),
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
 }
 
 .tasks-drag-hint.shown {
   opacity: 1;
+  scale: 1;
 }
 
 .tasks-drag-hint.armed {
@@ -2234,6 +2248,8 @@ body.tasks-dragging .tasks-card2 {
 .pane.task-drop-candidate .drop-hint {
   inset: 6px;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: all 160ms var(--ease-out);
+  animation: task-drop-candidate-in 280ms var(--ease-out) both;
 }
 
 .pane.task-drop-target .drop-hint {
@@ -2242,13 +2258,23 @@ body.tasks-dragging .tasks-card2 {
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
+@keyframes task-drop-candidate-in {
+  from {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .tasks,
+  .tasks::before,
   .tasks-card,
   .tasks-drag-ghost,
   .tasks-drag-ghost.dropped,
   .tasks-drag-hint {
     transition-duration: 1ms;
+  }
+
+  .pane.task-drop-candidate .drop-hint {
+    animation: none;
   }
 }
 

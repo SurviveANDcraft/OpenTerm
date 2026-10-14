@@ -107,6 +107,10 @@ const ICONS = {
  *  `.tasks-drag-ghost.outside` in tasks.css. */
 const GHOST_OUTSIDE_SCALE = 0.86;
 
+/** Pixels past (or back inside) the card's edge before a dragged task switches
+ *  between reordering and aiming at a terminal. */
+const PEEK_EDGE_SLACK = 10;
+
 function priorityColor(p: Task["priority"]): string {
   return TASK_PRIORITIES.find((x) => x.id === p)?.color ?? "#8b93a5";
 }
@@ -731,12 +735,19 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         return pane && handlers.terminalTitle(pane.dataset.paneId!) !== null ? pane : null;
       };
 
-      const insideCard = (x: number, y: number): boolean =>
-        !!cardRect &&
-        x >= cardRect.left &&
-        x <= cardRect.right &&
-        y >= cardRect.top &&
-        y <= cardRect.bottom;
+      /** Inside the card, with some hysteresis: leaving takes a step past the
+       *  edge and coming back a step inside it, so a pointer riding the border
+       *  doesn't flicker the panel in and out. */
+      const insideCard = (x: number, y: number): boolean => {
+        if (!cardRect) return true;
+        const m = peeking ? PEEK_EDGE_SLACK : -PEEK_EDGE_SLACK;
+        return (
+          x >= cardRect.left + m &&
+          x <= cardRect.right - m &&
+          y >= cardRect.top + m &&
+          y <= cardRect.bottom - m
+        );
+      };
 
       /** Slides the placeholder back to where the drag started, if it's since
        *  been moved elsewhere — keeps the visual state always matching "what
@@ -816,7 +827,7 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
           // Under the clone's bottom edge as it's drawn while outside (scaled
           // toward the grab point by the `.outside` scale in CSS).
           const below = (ghostHeight - grabY) * GHOST_OUTSIDE_SCALE * 1.04;
-          hint.style.transform = `translate(${x}px, ${y + below + 10}px) translateX(-50%)`;
+          hint.style.translate = `${x}px ${y + below + 10}px`;
         }
       };
 
