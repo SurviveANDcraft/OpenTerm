@@ -50,6 +50,11 @@ export interface TasksPanelHandlers {
   onOpenUrl(session: Session, url: string): void;
   /** Open a new terminal in the session and run `command` in it. */
   onRunInTerminal(session: Session, command: string): void;
+  /** The title of in-app terminal pane `paneId`, or null when the pane can't
+   *  take typed input (browser, file viewer, docked external window). */
+  terminalTitle(paneId: string): string | null;
+  /** A task dragged out of the panel was dropped on terminal pane `paneId`. */
+  onDropTaskToPane(task: Task, paneId: string): void;
 }
 
 function esc(s: string): string {
@@ -96,6 +101,11 @@ const ICONS = {
   checklist:
     '<svg viewBox="0 0 20 20"><rect x="3.5" y="2.5" width="13" height="15" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" d="M6.8 7.6l1.4 1.4 2.9-3"/><line x1="12.4" y1="12.6" x2="13.6" y2="12.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="6.6" y1="12.6" x2="10.4" y2="12.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
 };
+
+/** How far a dragged task's clone shrinks once it leaves the card, so it reads
+ *  as a token in hand rather than a slab over the terminals. Matches `scale` on
+ *  `.tasks-drag-ghost.outside` in tasks.css. */
+const GHOST_OUTSIDE_SCALE = 0.86;
 
 function priorityColor(p: Task["priority"]): string {
   return TASK_PRIORITIES.find((x) => x.id === p)?.color ?? "#8b93a5";
@@ -647,7 +657,12 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
    *  real element becomes an in-place placeholder that's physically moved to the
    *  candidate drop slot as the pointer crosses siblings, with FLIP-animated
    *  neighbours. On release the clone glides into that exact slot before the
-   *  data mutation and re-render take over. */
+   *  data mutation and re-render take over.
+   *
+   *  Carrying the clone off the card turns the drag into "hand this task to a
+   *  terminal": the panel fades back so the workspace shows through, every
+   *  terminal pane offers itself as a target, and dropping on one pastes the
+   *  task in as an agent-ready prompt. Esc cancels any drag. */
   function bindDrag(handle: HTMLElement, task: Task, allowStatusChange: boolean): void {
     handle.addEventListener("pointerdown", (e: PointerEvent) => {
       if (e.button !== 0) return;
@@ -671,10 +686,57 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
       let tilt = 0;
       let originalParent: HTMLElement | null = null;
       let originalNext: Element | null = null;
+      /** The card's rect at drag start — the in/out test can't re-measure it,
+       *  because the card shrinks a little while peeking. */
+      let cardRect: DOMRect | null = null;
+      let ghostHeight = 0;
+      let peeking = false;
+      let paneTarget: HTMLElement | null = null;
+      let hint: HTMLElement | null = null;
 
       const clearIndicators = () => {
         main.querySelectorAll(".drop-active").forEach((c) => c.classList.remove("drop-active"));
       };
+
+      const terminalPanes = (): HTMLElement[] =>
+        Array.from(document.querySelectorAll<HTMLElement>(".pane[data-pane-id]")).filter(
+          (p) => handlers.terminalTitle(p.dataset.paneId!) !== null
+        );
+
+      /** Fades the panel out of the way (and back) as the pointer leaves (or
+       *  re-enters) the card, so the terminals behind it can be aimed at. */
+      const setPeek = (on: boolean) => {
+        if (peeking === on) return;
+        peeking = on;
+        el.classList.toggle("peek", on);
+        ghost?.classList.toggle("outside", on);
+        hint?.classList.toggle("shown", on);
+        for (const p of terminalPanes()) p.classList.toggle("task-drop-candidate", on);
+        if (!on) setPaneTarget(null);
+      };
+
+      const setPaneTarget = (next: HTMLElement | null) => {
+        if (paneTarget === next) return;
+        paneTarget?.classList.remove("task-drop-target");
+        next?.classList.add("task-drop-target");
+        paneTarget = next;
+        if (!hint) return;
+        const title = next ? handlers.terminalTitle(next.dataset.paneId!) : null;
+        hint.textContent = next ? `Paste into ${title || "terminal"}` : "Drop on a terminal";
+        hint.classList.toggle("armed", !!next);
+      };
+
+      const terminalAt = (x: number, y: number): HTMLElement | null => {
+        const pane = document.elementFromPoint(x, y)?.closest<HTMLElement>(".pane[data-pane-id]");
+        return pane && handlers.terminalTitle(pane.dataset.paneId!) !== null ? pane : null;
+      };
+
+      const insideCard = (x: number, y: number): boolean =>
+        !!cardRect &&
+        x >= cardRect.left &&
+        x <= cardRect.right &&
+        y >= cardRect.top &&
+        y <= cardRect.bottom;
 
       /** Slides the placeholder back to where the drag started, if it's since
        *  been moved elsewhere — keeps the visual state always matching "what
@@ -711,6 +773,7 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         baseTop = rect.top;
         grabX = x - rect.left;
         grabY = y - rect.top;
+        ghostHeight = rect.height;
         lastX = x;
 
         ghost = handle.cloneNode(true) as HTMLElement;
@@ -719,8 +782,20 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         ghost.style.height = `${rect.height}px`;
         ghost.style.left = `${baseLeft}px`;
         ghost.style.top = `${baseTop}px`;
-        ghost.style.transform = "translate(0px, 0px) rotate(0deg) scale(1)";
-        document.body.appendChild(ghost);
+        // Cursor tracking goes in `translate`, which composes outside `scale`:
+        // the CSS shrink while off the card (and on drop) then pivots on the
+        // grab point and keeps the clone under the cursor, instead of also
+        // scaling the offset and drifting the clone away from it.
+        ghost.style.translate = "0px 0px";
+        ghost.style.transform = "rotate(0deg) scale(1)";
+        ghost.style.transformOrigin = `${grabX}px ${grabY}px`;
+        // A caption that rides under the clone while it's off the card. Its own
+        // element rather than a child, since rows and cards clip overflow.
+        hint = document.createElement("div");
+        hint.className = "tasks-drag-hint";
+        hint.textContent = "Drop on a terminal";
+        cardRect = card.getBoundingClientRect();
+        document.body.append(ghost, hint);
         requestAnimationFrame(() => ghost?.classList.add("lifted"));
 
         handle.classList.add("tasks-drag-placeholder");
@@ -735,7 +810,14 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         tilt += (targetTilt - tilt) * 0.35;
         const tx = x - grabX - baseLeft;
         const ty = y - grabY - baseTop;
-        ghost.style.transform = `translate(${tx}px, ${ty}px) rotate(${tilt.toFixed(2)}deg) scale(1.04)`;
+        ghost.style.translate = `${tx}px ${ty}px`;
+        ghost.style.transform = `rotate(${tilt.toFixed(2)}deg) scale(1.04)`;
+        if (hint) {
+          // Under the clone's bottom edge as it's drawn while outside (scaled
+          // toward the grab point by the `.outside` scale in CSS).
+          const below = (ghostHeight - grabY) * GHOST_OUTSIDE_SCALE * 1.04;
+          hint.style.transform = `translate(${x}px, ${y + below + 10}px) translateX(-50%)`;
+        }
       };
 
       const settleGhost = (andThen: () => void) => {
@@ -747,7 +829,8 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         const rect = handle.getBoundingClientRect();
         g.classList.remove("lifted");
         g.classList.add("settling");
-        g.style.transform = `translate(${rect.left - baseLeft}px, ${rect.top - baseTop}px) rotate(0deg) scale(1)`;
+        g.style.translate = `${rect.left - baseLeft}px ${rect.top - baseTop}px`;
+        g.style.transform = "rotate(0deg) scale(1)";
         let done = false;
         const finishSettle = () => {
           if (done) return;
@@ -759,12 +842,31 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         setTimeout(finishSettle, 260); // safety net if transitionend never fires
       };
 
+      /** Dropped on a terminal: the clone sinks into the drop point while the
+       *  pane pulses once, and the panel steps aside so the pasted prompt is in
+       *  view and the terminal has focus. */
+      const landInPane = (pane: HTMLElement) => {
+        const g = ghost;
+        ghost = null;
+        if (g) {
+          g.classList.add("dropped");
+          setTimeout(() => g.remove(), 260);
+        }
+        handle.classList.remove("tasks-drag-placeholder");
+        pane.classList.remove("path-landed");
+        void pane.offsetWidth; // restart the pulse if it's still playing
+        pane.classList.add("path-landed");
+        setTimeout(() => pane.classList.remove("path-landed"), 700);
+        handlers.onDropTaskToPane(task, pane.dataset.paneId!);
+      };
+
       const finish = (commit: boolean) => {
         if (finished) return;
         finished = true;
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onUp);
+        window.removeEventListener("keydown", onKey, true);
         try {
           if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
         } catch {
@@ -772,6 +874,14 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         }
         if (!dragging) return;
         document.body.classList.remove("tasks-dragging");
+        hint?.remove();
+        hint = null;
+        const pane = paneTarget;
+        setPeek(false);
+        if (commit && pane?.isConnected) {
+          landInPane(pane);
+          return;
+        }
         clearIndicators();
         const shouldCommit = commit && dropStatus;
         if (!shouldCommit) revertPlaceholder();
@@ -790,7 +900,11 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         }
         positionGhost(ev.clientX, ev.clientY);
 
-        const under = document.elementFromPoint(ev.clientX, ev.clientY);
+        const outside = !insideCard(ev.clientX, ev.clientY);
+        setPeek(outside);
+        if (outside) setPaneTarget(terminalAt(ev.clientX, ev.clientY));
+
+        const under = outside ? null : document.elementFromPoint(ev.clientX, ev.clientY);
         const container = under?.closest<HTMLElement>("[data-status]");
         if (!container || (!allowStatusChange && container.dataset.status !== task.status)) {
           if (dropKey !== "") {
@@ -838,9 +952,19 @@ export function createTasksPanel(handlers: TasksPanelHandlers) {
         finish(ev.type === "pointerup");
       };
 
+      /** Esc mid-drag puts the task back where it was — and must not also
+       *  reach the panel's own Esc handling, which would close it. */
+      const onKey = (ev: KeyboardEvent) => {
+        if (ev.key !== "Escape" || !dragging) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        finish(false);
+      };
+
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
+      window.addEventListener("keydown", onKey, true);
     });
   }
 

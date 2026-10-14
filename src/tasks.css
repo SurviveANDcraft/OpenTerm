@@ -22,6 +22,9 @@
   background: color-mix(in srgb, var(--bg-pane) 70%, transparent);
   backdrop-filter: blur(6px) saturate(115%);
   place-items: center;
+  transition:
+    background-color 200ms var(--ease-out),
+    backdrop-filter 200ms var(--ease-out);
 }
 
 .tasks.visible {
@@ -46,6 +49,9 @@
   flex-direction: column;
   overflow: hidden;
   animation: tasks-modal-in 240ms var(--ease-out);
+  transition:
+    opacity 200ms var(--ease-out),
+    scale 200ms var(--ease-out);
 }
 
 @keyframes tasks-modal-in {
@@ -2103,10 +2109,10 @@ body.tasks-dragging .tasks-card2 {
   z-index: 500;
   margin: 0 !important;
   pointer-events: none;
-  will-change: transform;
+  will-change: translate, transform;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
   opacity: 0.97;
-  transition: box-shadow 160ms ease, opacity 160ms ease;
+  transition: box-shadow 160ms ease, opacity 160ms ease, scale 180ms var(--ease-out);
 }
 
 .tasks-drag-ghost.lifted {
@@ -2114,8 +2120,9 @@ body.tasks-dragging .tasks-card2 {
 }
 
 .tasks-drag-ghost.settling {
-  transition: transform 220ms cubic-bezier(0.22, 0.9, 0.3, 1), box-shadow 220ms ease,
-    opacity 200ms ease;
+  transition: translate 220ms cubic-bezier(0.22, 0.9, 0.3, 1),
+    transform 220ms cubic-bezier(0.22, 0.9, 0.3, 1),
+    scale 220ms cubic-bezier(0.22, 0.9, 0.3, 1), box-shadow 220ms ease, opacity 200ms ease;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
@@ -2138,6 +2145,111 @@ body.tasks-dragging .tasks-card2 {
   border: 1.5px dashed var(--accent);
   border-radius: inherit;
   background: var(--accent-dim);
+}
+
+/* ---- dragging a task out of the card, onto a terminal ---- */
+
+/* The panel fades back so the workspace shows through, and lets the pointer
+ * reach the panes underneath. */
+.tasks.peek {
+  background-color: transparent;
+  backdrop-filter: none;
+}
+
+.tasks.peek,
+.tasks.peek * {
+  pointer-events: none !important;
+}
+
+.tasks.peek .tasks-card {
+  opacity: 0.14;
+  scale: 0.985;
+}
+
+/* Off the card the clone shrinks into a token held under the cursor (keep the
+ * scale in sync with GHOST_OUTSIDE_SCALE in tasksPanel.ts). `scale` composes
+ * with the per-move `transform`, so this can ease without fighting tracking. */
+.tasks-drag-ghost.outside {
+  scale: 0.86;
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    0 18px 40px rgba(0, 0, 0, 0.5),
+    0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.tasks-drag-ghost.dropped {
+  transition:
+    scale 220ms var(--ease-out),
+    opacity 220ms var(--ease-out),
+    filter 220ms var(--ease-out);
+  scale: 0.3;
+  opacity: 0;
+  filter: blur(2px);
+}
+
+.tasks-drag-hint {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 501;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--bg-raised) 90%, transparent);
+  backdrop-filter: blur(10px) saturate(1.2);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  transition:
+    opacity 160ms var(--ease-out),
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.tasks-drag-hint.shown {
+  opacity: 1;
+}
+
+.tasks-drag-hint.armed {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-raised));
+}
+
+/* Every terminal offers itself while the task is off the card; the one under
+ * the pointer lights up. */
+.pane.task-drop-candidate .drop-overlay,
+.pane.task-drop-target .drop-overlay {
+  display: block;
+}
+
+.pane.task-drop-candidate .drop-hint {
+  inset: 6px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.pane.task-drop-target .drop-hint {
+  inset: 0;
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tasks,
+  .tasks-card,
+  .tasks-drag-ghost,
+  .tasks-drag-ghost.dropped,
+  .tasks-drag-hint {
+    transition-duration: 1ms;
+  }
 }
 
 /* ---- narrow windows ---- */

@@ -2852,6 +2852,20 @@ const tasksPanel = createTasksPanel({
     setActiveSession(session.id);
     void runInNewTerminal(session, command);
   },
+  terminalTitle: (paneId) => {
+    const term = panes.get(paneId);
+    return term ? term.title : null;
+  },
+  // Same agent-ready prompt a delegation would send, bracketed-paste wrapped so
+  // an agent CLI or shell takes it as one multi-line paste. No Enter: the user
+  // reads it over (or adds to it) and submits.
+  onDropTaskToPane: (task, paneId) => {
+    if (!panes.has(paneId)) return;
+    tasksPanel.close();
+    const prompt = buildDelegationPrompt(task);
+    void writePty(paneId, `\x1b[200~${prompt.replace(/\r/g, "")}\x1b[201~`);
+    focusPane(paneId);
+  },
 });
 
 /** Splits a fresh terminal off the session's focused pane and types `command`
