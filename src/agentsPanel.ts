@@ -42,6 +42,7 @@ import { fetchPaneUsage, fmtCost } from "./usage";
 import { AGENTS_PANEL_WIDTH_MAX, AGENTS_PANEL_WIDTH_MIN } from "./types";
 import { icon, type IconName } from "./agentsIcons";
 import { createVoiceView } from "./voice/voiceView";
+import { hasSecret } from "./secrets";
 
 export interface AgentsPanelHost {
   focusPane(sessionId: string, paneId: string): void;
@@ -858,7 +859,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
   // ------------------------------------------------------------ chat
 
   function updatePlaceholder(): void {
-    const locked = !store.state.settings.openrouterApiKey.trim();
+    const locked = !hasSecret("openrouter");
     input.disabled = locked;
     sendBtn.disabled = locked;
     el.classList.toggle("locked", locked);
@@ -877,7 +878,7 @@ export function createAgentsPanel(host: AgentsPanelHost) {
   }
 
   function renderEmptyThread(): void {
-    const locked = !store.state.settings.openrouterApiKey.trim();
+    const locked = !hasSecret("openrouter");
     thread.innerHTML = locked
       ? `<div class="ap-welcome">
           <div class="ap-welcome-mark">${icon("sparkle", 18)}</div>
@@ -1112,7 +1113,7 @@ ${screenExcerpt(id, 80, 5000) || "(terminal is empty)"}
   async function send(text: string, notice?: { paneId: string | null; label: string }): Promise<void> {
     const q = text.trim();
     if (!q || conversation.running) return;
-    if (!store.state.settings.openrouterApiKey.trim()) return;
+    if (!hasSecret("openrouter")) return;
     if (thread.querySelector(".ap-welcome")) thread.innerHTML = "";
 
     const sentAttached = notice ? (notice.paneId ? [notice.paneId] : []) : [...attached];

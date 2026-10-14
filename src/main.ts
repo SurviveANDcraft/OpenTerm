@@ -143,6 +143,7 @@ import {
   syncShellIntegration,
   takeLaunchFolder,
 } from "./folderLaunch";
+import { hasSecret, onSecretsChange } from "./secrets";
 
 /** Ceiling on how much of a terminal's tail can be handed over on an Alt+drag
  *  context drop. The actual amount used is min(this, the pane's scrollback
@@ -491,8 +492,8 @@ async function runDelegation(session: Session, task: Task): Promise<void> {
   rerender(session);
   requestAnimationFrame(() => focusPane(newId));
 
-  const key = store.state.settings.openrouterApiKey.trim();
-  const loading = showDelegationLoading(newId, agentDef.label, !!key);
+  const hasKey = hasSecret("openrouter");
+  const loading = showDelegationLoading(newId, agentDef.label, hasKey);
   const fail = (): void => {
     loading.remove();
     d.status = "failed";
@@ -508,7 +509,7 @@ async function runDelegation(session: Session, task: Task): Promise<void> {
   /** Shown on the overlay when refinement was attempted and didn't work, so the
    *  failure is visible in the pane instead of only in the inbox. */
   let failureNote = "";
-  if (!key) {
+  if (!hasKey) {
     failureNote = "No OpenRouter key — delegating as written";
     addInboxItem({
       kind: "delegation",
@@ -520,13 +521,13 @@ async function runDelegation(session: Session, task: Task): Promise<void> {
   } else {
     try {
       try {
-        prompt = await enhancePrompt(rawPrompt, key);
+        prompt = await enhancePrompt(rawPrompt);
       } catch (first) {
         // One retry: a cold connection or a transient OpenRouter 5xx shouldn't
         // cost the user their refined prompt.
         console.warn("Prompt enhancement failed, retrying once:", first);
         await new Promise((r) => setTimeout(r, 800));
-        prompt = await enhancePrompt(rawPrompt, key);
+        prompt = await enhancePrompt(rawPrompt);
       }
       enhanced = true;
     } catch (e) {
@@ -2756,6 +2757,14 @@ const sidebar = createSidebar({
     }),
 });
 
+// A key saved or removed in Settings unlocks or locks the AI features at once,
+// without waiting for the settings page's own Save. The state save drops a
+// plaintext copy an older version may have left in state.json.
+onSecretsChange(() => {
+  agentsPanel.refreshSettings();
+  store.save(true);
+});
+
 const settingsView = createSettingsView({
   onSave: (draft) => {
     const shellChanged = draft.shellIntegration !== store.state.settings.shellIntegration;
@@ -2763,7 +2772,7 @@ const settingsView = createSettingsView({
     applySettingsLive();
     // Explicit toggle, so register even from a dev build (unlike the boot refresh).
     if (shellChanged) void syncShellIntegration(draft.shellIntegration);
-    // Settings, key and theme tokens all feed the dictation agent's config.
+    // Settings and theme tokens feed the dictation agent's config.
     void syncDictation(draft);
   },
   onResetData: () => void resetAllData(),

@@ -48,6 +48,7 @@ mod dictation;
 mod git;
 mod github;
 mod harness;
+mod secrets;
 mod shell_integration;
 mod usage;
 
@@ -355,14 +356,27 @@ const PRE_RESTORE_NAME: &str = "state-pre-restore.json";
 /// being overwritten while the user is away.
 const DAILY_KEEP: usize = 7;
 
-/// Days-since-epoch → YYYY-MM-DD (UTC), Howard Hinnant's civil-from-days.
-/// Avoids pulling in a date crate just to name daily snapshot files.
+/// Today as YYYY-MM-DD (UTC), for naming daily snapshot files.
 fn utc_date_string() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let days = secs.div_euclid(86_400);
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Seconds since the epoch → `YYYY-MM-DDTHH:MM:SSZ`, the timestamp form
+/// Google's APIs take.
+fn rfc3339_utc(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let t = secs.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60)
+}
+
+/// Days since the epoch → (year, month, day), Howard Hinnant's
+/// civil-from-days. Avoids pulling in a date crate for two formatters.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -373,7 +387,7 @@ fn utc_date_string() -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
+    (y, m, d)
 }
 
 /// Reads a file only if it exists AND parses as JSON — a truncated/corrupt
@@ -515,8 +529,17 @@ struct SaveResult {
 #[tauri::command]
 async fn save_state(app: AppHandle, json: String) -> Result<SaveResult, String> {
     // Never overwrite the live file with something we couldn't read back.
-    serde_json::from_str::<serde_json::Value>(&json)
+    let mut state = serde_json::from_str::<serde_json::Value>(&json)
         .map_err(|e| format!("refusing to save invalid state JSON: {e}"))?;
+
+    // Keys never go to disk with the state, except one an older version left
+    // there that no keystore would take yet: that one stays where it was.
+    let vault = secrets::Vault::new(&app)?;
+    let had_keys = secrets::absorb(&vault, &mut state);
+    let json = match had_keys | secrets::restore_unmigrated(&mut state) {
+        true => serde_json::to_string(&state).map_err(|e| e.to_string())?,
+        false => json,
+    };
 
     let path = state_path(&app)?;
     write_state_atomic(&path, &json).await?;
@@ -534,9 +557,50 @@ struct LoadedState {
     recovered_from_backup: bool,
 }
 
+/// Loads the state and moves any API key in it into the keystore. The
+/// frontend never gets a key back: it asks `secrets_status` what's saved.
 #[tauri::command]
-fn load_state(app: AppHandle) -> LoadedState {
-    let path = match state_path(&app) {
+async fn load_state(app: AppHandle) -> LoadedState {
+    let loaded = read_state_or_backup(&app);
+    let (Some(json), Ok(vault)) = (&loaded.json, secrets::Vault::new(&app)) else {
+        return loaded;
+    };
+    let Ok(mut state) = serde_json::from_str::<serde_json::Value>(json) else {
+        return loaded;
+    };
+    let keystore = vault.clone();
+    let absorbed = tauri::async_runtime::spawn_blocking(move || {
+        let found = secrets::absorb(&keystore, &mut state);
+        (state, found)
+    })
+    .await;
+    let Ok((state, found)) = absorbed else { return loaded };
+
+    // A primary file that held keys is rewritten right away, minus whatever
+    // made it into the keystore. A backup we recovered from is left as it is:
+    // the frontend's first save replaces the primary anyway.
+    if found && !loaded.recovered_from_backup {
+        let mut on_disk = state.clone();
+        secrets::restore_unmigrated(&mut on_disk);
+        if let (Ok(path), Ok(text)) = (state_path(&app), serde_json::to_string(&on_disk)) {
+            if let Err(e) = write_state_atomic(&path, &text).await {
+                eprintln!("[secrets] couldn't rewrite state.json without keys: {e}");
+            }
+        }
+    }
+    // Backups too, before the frontend can save (a save rotates the ring).
+    if secrets::needs_scrub(&vault, found) {
+        let _ = tauri::async_runtime::spawn_blocking(move || secrets::scrub_old_copies(&vault)).await;
+    }
+
+    LoadedState {
+        json: serde_json::to_string(&state).ok().or(loaded.json),
+        recovered_from_backup: loaded.recovered_from_backup,
+    }
+}
+
+fn read_state_or_backup(app: &AppHandle) -> LoadedState {
+    let path = match state_path(app) {
         Ok(p) => p,
         Err(_) => return LoadedState { json: None, recovered_from_backup: false },
     };
@@ -715,22 +779,24 @@ async fn restore_backup(app: AppHandle, filename: String) -> Result<(), String> 
 /// user lost ("the OpenTerm session"). Only the metadata rows from
 /// `list_backups` are sent — timestamps and session names, never file contents.
 #[tauri::command]
-async fn find_in_backups(api_key: String, query: String, candidates: String) -> Result<String, String> {
+async fn find_in_backups(app: AppHandle, query: String, candidates: String) -> Result<String, String> {
     const FIND_SYSTEM: &str = "You help a user find the right backup of their terminal-workspace app. You get a description of what they lost and a JSON array of backups, each with a filename, an ISO timestamp and the session names it contains. Pick the NEWEST backup that plausibly contains what they describe — newest matters, because older ones lose more recent work. Match loosely on session names (case-insensitive, partial words, typos), and use the timestamps when the user refers to time (\"this morning\", \"before lunch\"). Reply with ONLY a JSON object: {\"bestBackup\": string|null, \"confidence\": \"high\"|\"medium\"|\"low\", \"reason\": string, \"runnersUp\": string[]}. \"bestBackup\" is a filename copied exactly from the candidates, or null if none is plausible. \"reason\" is one short sentence naming what matched. \"runnersUp\" holds at most 3 other candidate filenames worth a look, newest first. Never invent a filename. No markdown, no code fences.";
 
     let user = format!("What the user is looking for:\n{query}\n\nCandidates (newest first):\n{candidates}");
-    openrouter_chat(&api_key, FIND_SYSTEM, &user, 400, 30).await
+    let key = secrets::Vault::new(&app)?.require(secrets::Secret::OpenRouter)?;
+    openrouter_chat(&key, FIND_SYSTEM, &user, 400, 30).await
 }
 
 /// Refines a delegated task's prompt via OpenRouter before it's handed to an
 /// agent CLI. Runs here (not the webview) so there's no CORS/origin exposure
-/// and the API key never has to fight browser fetch rules. When delegation
+/// and the API key never reaches the webview. When delegation
 /// moves behind a subscription, this command becomes the backend call.
 #[tauri::command]
-async fn enhance_prompt(api_key: String, prompt: String) -> Result<String, String> {
+async fn enhance_prompt(app: AppHandle, prompt: String) -> Result<String, String> {
     const ENHANCE_SYSTEM: &str = "You prepare tasks for hand-off to an autonomous AI coding agent working in a terminal. Rewrite the user's task so the agent understands exactly what was wanted: Clarify vague wording and state the goal plainly. Add any helpful context you can infer from the task itself. Keep it medium length: short enough to paste into a CLI, complete enough to act on. If anything important is genuinely ambiguous or missing, add a short final section titled \"Questions for the user:\" listing what the agent should ask before proceeding. Do not invent requirements. Output only the rewritten task text.";
 
-    openrouter_chat(&api_key, ENHANCE_SYSTEM, &prompt, 1200, 45).await
+    let key = secrets::Vault::new(&app)?.require(secrets::Secret::OpenRouter)?;
+    openrouter_chat(&key, ENHANCE_SYSTEM, &prompt, 1200, 45).await
 }
 
 /// Turns a raw terminal notification (a prompt line, an error line — whatever
@@ -738,12 +804,13 @@ async fn enhance_prompt(api_key: String, prompt: String) -> Result<String, Strin
 /// returned as a JSON object. Same model and plumbing as `enhance_prompt`;
 /// separate command so the two prompts can drift apart independently.
 #[tauri::command]
-async fn name_notification(api_key: String, context: String) -> Result<String, String> {
+async fn name_notification(app: AppHandle, context: String) -> Result<String, String> {
     const NAME_SYSTEM: &str = "You turn raw terminal output into a readable desktop notification. You are given the notification type and the terminal text that triggered it, which may contain box-drawing characters, menu UI, prompt glyphs or a stack trace. Reply with ONLY a JSON object: {\"title\": string, \"summary\": string}. \"title\" is a specific name for what happened, at most 6 words, no trailing punctuation (e.g. \"Claude wants to run git push\", \"Vite build failed: missing import\"). \"summary\" is one plain sentence, at most 140 characters, saying what happened and what the user is being asked to do, if anything. Use only information present in the output — never invent a program name, file or error. Strip decorative characters. If the output is too garbled to interpret, title it \"Terminal needs attention\" and describe what little is legible. No markdown, no code fences.";
 
     // Small budget on purpose: the reply is two short strings, and a cap keeps
     // a model that starts rambling from stalling the notification.
-    openrouter_chat(&api_key, NAME_SYSTEM, &context, 300, 20).await
+    let key = secrets::Vault::new(&app)?.require(secrets::Secret::OpenRouter)?;
+    openrouter_chat(&key, NAME_SYSTEM, &context, 300, 20).await
 }
 
 /// Shared OpenRouter chat-completion call: one system prompt, one user message,
@@ -1747,6 +1814,11 @@ fn main() {
             find_in_backups,
             enhance_prompt,
             name_notification,
+            secrets::commands::secrets_status,
+            secrets::commands::secret_set,
+            secrets::commands::secret_clear,
+            secrets::commands::secret_test,
+            secrets::commands::gemini_live_token,
             list_dir,
             read_text_file,
             read_file_base64,

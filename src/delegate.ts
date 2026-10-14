@@ -40,12 +40,13 @@ export function buildDelegationPrompt(task: Task): string {
   return parts.join("\n\n");
 }
 
-/** Sends the raw prompt to OpenRouter (via the `enhance_prompt` Rust command)
- *  and returns the clarified version. Routed through the backend so there's no
- *  CORS/origin exposure in the webview, and one place to swap in a subscription
- *  backend later. Throws on any failure — callers fall back to the raw text. */
-export async function enhancePrompt(raw: string, apiKey: string): Promise<string> {
-  const text = await invoke<string>("enhance_prompt", { apiKey, prompt: raw });
+/** Sends the raw prompt to OpenRouter (via the `enhance_prompt` Rust command,
+ *  which uses the saved key) and returns the clarified version. Routed through
+ *  the backend so there's no CORS/origin exposure in the webview, and one place
+ *  to swap in a subscription backend later. Throws on any failure — callers
+ *  fall back to the raw text. */
+export async function enhancePrompt(raw: string): Promise<string> {
+  const text = await invoke<string>("enhance_prompt", { prompt: raw });
   const trimmed = text.trim();
   if (!trimmed) throw new Error("OpenRouter returned an empty response");
   return trimmed;

@@ -17,6 +17,7 @@ import type { AssistantPerm } from "../types";
 import { VoiceAudio } from "./audio";
 import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE, LiveSession, type LiveState, type LiveToolCall } from "./liveSession";
 import { LIST_TOOL, voiceSystemPrompt, voiceTools } from "./prompt";
+import { hasSecret } from "../secrets";
 
 export interface VoiceDeps {
   conversation: Conversation;
@@ -422,8 +423,7 @@ export function createVoiceView(deps: VoiceDeps) {
   function start(): void {
     if (active) return;
     const s = store.state.settings;
-    const apiKey = s.geminiApiKey.trim();
-    if (!apiKey) {
+    if (!hasSecret("gemini")) {
       deps.openAiSettings();
       return;
     }
@@ -459,7 +459,6 @@ export function createVoiceView(deps: VoiceDeps) {
     audio = mic;
     const session = new LiveSession(
       {
-        apiKey,
         model: s.voiceModel.trim() || DEFAULT_LIVE_MODEL,
         voice: s.voiceName || DEFAULT_VOICE,
         setup: (fresh) => ({

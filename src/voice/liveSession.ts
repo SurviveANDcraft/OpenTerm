@@ -5,12 +5,17 @@
  *  A connection lasts about 15 minutes of audio. The server announces the end
  *  (goAway) and hands out resumption handles as it goes, so the session
  *  reconnects by itself, between turns when it can, and the conversation
- *  carries on with its context intact. An unexpected drop takes the same path. */
+ *  carries on with its context intact. An unexpected drop takes the same path.
+ *
+ *  The API key never comes here: every connection asks the Rust side for a
+ *  fresh single-use token (`gemini_live_token`) and dials the endpoint meant
+ *  for those. */
 
+import { invoke } from "@tauri-apps/api/core";
 import { INPUT_MIME } from "./audio";
 
 const ENDPOINT =
-  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained";
 export const DEFAULT_LIVE_MODEL = "gemini-3.8-live";
 export const DEFAULT_VOICE = "Aoede";
 export const VOICES = ["Aoede", "Charon", "Fenrir", "Kore", "Leda", "Orus", "Puck", "Zephyr"];
@@ -43,7 +48,6 @@ export interface LiveSetup {
 }
 
 export interface LiveConfig {
-  apiKey: string;
   model: string;
   voice: string;
   /** Called on every (re)connect. `fresh` is true when the server won't have
@@ -99,6 +103,9 @@ export class LiveSession {
   private inTurn = false;
   private rollover: number | null = null;
   private setupTimer: number | null = null;
+  /** Bumped whenever a connection is let go, so a token that arrives for an
+   *  abandoned attempt is dropped instead of dialed. */
+  private attempt = 0;
 
   constructor(
     private readonly cfg: LiveConfig,
@@ -157,8 +164,10 @@ export class LiveSession {
     this.rollover = this.setupTimer = null;
   }
 
-  /** Lets go of the current socket without its close handler reacting. */
+  /** Lets go of the current socket, or the one still waiting on its token,
+   *  without its close handler reacting. */
   private detach(): void {
+    this.attempt++;
     const ws = this.ws;
     this.ws = null;
     if (!ws) return;
@@ -175,7 +184,21 @@ export class LiveSession {
     this.detach();
     this.inTurn = false;
     this.setState(as);
-    const ws = new WebSocket(`${ENDPOINT}?key=${encodeURIComponent(this.cfg.apiKey)}`);
+    // Covers fetching the token too: a hung request ends like a silent server.
+    this.setupTimer = window.setTimeout(() => this.dropped("Gemini didn't answer in time."), SETUP_TIMEOUT_MS);
+    const attempt = this.attempt;
+    invoke<string>("gemini_live_token").then(
+      (token) => {
+        if (attempt === this.attempt) this.dial(token);
+      },
+      (e: unknown) => {
+        if (attempt === this.attempt) this.dropped(e instanceof Error ? e.message : String(e));
+      }
+    );
+  }
+
+  private dial(token: string): void {
+    const ws = new WebSocket(`${ENDPOINT}?access_token=${encodeURIComponent(token)}`);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {
@@ -210,7 +233,6 @@ export class LiveSession {
       this.handleMessage(msg);
     };
     ws.onclose = (e: CloseEvent) => this.dropped(e.reason || (e.code === 1006 ? "Couldn't reach Gemini. Check your connection." : `Connection closed (${e.code}).`));
-    this.setupTimer = window.setTimeout(() => this.dropped("Gemini didn't answer in time."), SETUP_TIMEOUT_MS);
   }
 
   /** The socket went away without us asking. */

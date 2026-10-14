@@ -10,6 +10,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { lastPrompt, screenExcerpt, type AgentInfo, type AgentStatus } from "./agentsData";
 import { store } from "./store";
+import { hasSecret } from "./secrets";
 
 export interface CardSummary {
   task: string;
@@ -59,7 +60,7 @@ export function isSummarizing(paneId: string): boolean {
 
 export function summariesEnabled(): boolean {
   const s = store.state.settings;
-  return s.agentCardSummaries && s.openrouterApiKey.trim().length > 0;
+  return s.agentCardSummaries && hasSecret("openrouter");
 }
 
 /** Called on every panel refresh with the agent cards on screen. Cheap when
@@ -124,10 +125,7 @@ async function summarize(a: AgentInfo): Promise<void> {
       promptText ? `User's last prompt:\n${promptText}` : "User's last prompt: (unknown)",
       `Screen tail:\n${screenExcerpt(a.paneId, SCREEN_LINES, SCREEN_MAX_CHARS) || "(empty)"}`,
     ].join("\n\n");
-    const raw = await invoke<string>("summarize_agent", {
-      apiKey: store.state.settings.openrouterApiKey.trim(),
-      context,
-    });
+    const raw = await invoke<string>("summarize_agent", { context });
     const parsed = parse(raw);
     e.summary = { ...parsed, at: Date.now() };
     e.failures = 0;

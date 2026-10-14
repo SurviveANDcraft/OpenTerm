@@ -6,7 +6,8 @@
 //! take the terminals down with it.
 //!
 //! State shared with the main app lives on disk in `app_data_dir/dictation/`:
-//! `config.json` (written by Settings), `history.json` / `unsent.json` /
+//! `config.json` (written by Settings; the OpenRouter key comes from the
+//! keystore instead, see `crate::secrets`), `history.json` / `unsent.json` /
 //! `audio/` (written here), and `commands.json` plus a named event for the
 //! few actions Settings sends over.
 //!
@@ -117,6 +118,10 @@ impl Default for DictationSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub settings: DictationSettings,
+    /// Never in config.json: the agent reads it from the keystore on every
+    /// reload (see `reload_config`). Older versions wrote it there; serde
+    /// ignores the leftover field.
+    #[serde(skip)]
     pub api_key: String,
     /// Theme tokens for the overlay (--bg-raised, --text, --accent, ...).
     pub theme: HashMap<String, String>,
@@ -248,12 +253,13 @@ pub fn run_agent(mut context: tauri::Context<Wry>) {
         .setup(move |app| {
             let handle = app.handle().clone();
             let dir = data_dir(&handle).ok_or("no app data dir")?;
+            let vault = crate::secrets::Vault::new(&handle)?;
             let webview_dir = handle.path().app_local_data_dir()?.join("dictation-webview");
             overlay::create(&handle, webview_dir, tx.clone())?;
             let (tray, pause_item) = build_tray(&handle, tx.clone())?;
             hotkey::install(tx.clone());
             watch_events(handle.clone(), tx.clone());
-            let agent = Agent::new(dir, tx, tray, pause_item);
+            let agent = Agent::new(dir, vault, tx, tray, pause_item);
             thread::spawn(move || agent.run(rx));
             Ok(())
         })
@@ -329,6 +335,7 @@ enum Phase {
 
 struct Agent {
     dir: PathBuf,
+    vault: crate::secrets::Vault,
     store: Store,
     tx: Sender<Msg>,
     tray: TrayIcon<Wry>,
@@ -345,11 +352,18 @@ struct Agent {
 }
 
 impl Agent {
-    fn new(dir: PathBuf, tx: Sender<Msg>, tray: TrayIcon<Wry>, pause_item: MenuItem<Wry>) -> Self {
+    fn new(
+        dir: PathBuf,
+        vault: crate::secrets::Vault,
+        tx: Sender<Msg>,
+        tray: TrayIcon<Wry>,
+        pause_item: MenuItem<Wry>,
+    ) -> Self {
         let store = Store::new(dir.clone());
         let hints_shown = store.stats().hints_shown;
         Agent {
             dir,
+            vault,
             store,
             tx,
             tray,
@@ -442,18 +456,20 @@ impl Agent {
     fn reload_config(&mut self, force: bool) {
         let path = self.dir.join("config.json");
         let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-        if !force && mtime == self.cfg_mtime {
-            return;
+        if force || mtime != self.cfg_mtime {
+            self.cfg_mtime = mtime;
+            self.cfg = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            self.chord = hotkey::parse_chord(&self.cfg.settings.shortcut);
+            hotkey::set_chord(self.chord);
+            overlay::set_theme(&self.cfg.theme);
+            self.apply_hook_state();
         }
-        self.cfg_mtime = mtime;
-        self.cfg = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        self.chord = hotkey::parse_chord(&self.cfg.settings.shortcut);
-        hotkey::set_chord(self.chord);
-        overlay::set_theme(&self.cfg.theme);
-        self.apply_hook_state();
+        // Every time, not just when config.json changed: a key saved or
+        // removed in Settings applies to the very next recording.
+        self.cfg.api_key = self.vault.get(crate::secrets::Secret::OpenRouter).unwrap_or_default();
     }
 
     fn apply_hook_state(&self) {

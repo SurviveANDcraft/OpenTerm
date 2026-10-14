@@ -9,19 +9,20 @@ import { getTheme } from "../themes";
 import { DEFAULT_VOCABULARY, DictationSettings, Settings } from "../types";
 import { recorder } from "../keybinds";
 import { createSimulator } from "./simulator";
+import { hasSecret } from "../secrets";
 import "./dictation.css";
 
 // ---------------------------------------------------------------- sync with the agent
 
 const THEME_TOKENS = ["--bg-raised", "--text", "--text-dim", "--accent", "--danger"] as const;
 
-/** Writes the agent's config.json (settings, key, theme tokens), syncs the
+/** Writes the agent's config.json (settings, theme tokens), syncs the
  *  autostart entry and starts or stops the agent. Safe to call often. */
 export function syncDictation(s: Settings): Promise<void> {
   const vars = getTheme(s.theme).vars;
   const theme = Object.fromEntries(THEME_TOKENS.map((k) => [k, vars[k]]));
   return invoke<void>("dictation_sync", {
-    config: { settings: s.dictation, apiKey: s.openrouterApiKey.trim(), theme },
+    config: { settings: s.dictation, theme },
   }).catch(() => {});
 }
 
@@ -365,7 +366,7 @@ export function createDictationTab(ctx: DictationTabContext) {
   const { ui } = ctx;
   const d = (): DictationSettings => ctx.draft().dictation;
   const accent = () => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-  const hasKey = () => !!ctx.draft().openrouterApiKey.trim();
+  const hasKey = () => hasSecret("openrouter");
 
   const root = el("div", "dict-tab");
   let pane: Pane | null = null;

@@ -9,6 +9,7 @@ import {
 } from "./types";
 import { pruneExternalLeaves } from "./tree";
 import { addInboxItem } from "./inbox";
+import { loadSecrets } from "./secrets";
 
 /** UTC day key, matching how the Rust side names daily snapshot files. */
 function utcDayKey(): string {
@@ -41,6 +42,8 @@ class Store {
         json: string | null;
         recoveredFromBackup: boolean;
       }>("load_state");
+      // After load_state: that's what moves keys out of an older state.json.
+      await loadSecrets();
       this.recoveredFromBackup = !!res.recoveredFromBackup;
       const raw = res.json;
       if (!raw) {

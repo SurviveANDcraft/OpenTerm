@@ -83,7 +83,7 @@ pub fn assistant_cancel(request_id: String) {
 /// layout (and with it the provider's prefix cache) stays under one owner.
 #[tauri::command]
 pub async fn assistant_chat(
-    api_key: String,
+    app: tauri::AppHandle,
     request_id: String,
     messages: Value,
     tools: Value,
@@ -98,6 +98,7 @@ pub async fn assistant_chat(
     // A stale flag from a stop pressed after the previous turn finished must
     // not kill this one.
     take_cancel(&request_id);
+    let api_key = crate::secrets::Vault::new(&app)?.require(crate::secrets::Secret::OpenRouter)?;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(TURN_TIMEOUT_SECS))
@@ -121,7 +122,7 @@ pub async fn assistant_chat(
 
     let mut resp = client
         .post(OPENROUTER_URL)
-        .bearer_auth(api_key.trim())
+        .bearer_auth(api_key)
         .json(&body)
         .send()
         .await
@@ -224,7 +225,8 @@ fn apply_chunk(v: &Value, turn: &mut AssistantTurn, on_event: &Channel<Assistant
 /// Names what an agent was asked to do and what it's doing now, for its card.
 /// Returns the model's JSON text; the frontend parses it leniently.
 #[tauri::command]
-pub async fn summarize_agent(api_key: String, context: String) -> Result<String, String> {
+pub async fn summarize_agent(app: tauri::AppHandle, context: String) -> Result<String, String> {
     const SYSTEM: &str = "You label AI coding-agent terminals for a dashboard. You get the user's last prompt to the agent (may be missing) and the tail of the agent's terminal screen. Reply with ONLY a JSON object: {\"task\": string, \"now\": string}. \"task\" names what the user asked for, imperative, at most 7 words (e.g. \"Fix login redirect loop\"); if the prompt is missing infer it from the screen, or use \"\" if you can't. \"now\" says what the agent is doing or where it stands right now, at most 10 words (e.g. \"Running tests, 2 failing\", \"Done, waiting for review\", \"Asking permission to run git push\"). Use only what the input shows; never invent files or results. No markdown, no em dashes.";
-    crate::openrouter_chat(&api_key, SYSTEM, &context, 120, 20).await
+    let key = crate::secrets::Vault::new(&app)?.require(crate::secrets::Secret::OpenRouter)?;
+    crate::openrouter_chat(&key, SYSTEM, &context, 120, 20).await
 }

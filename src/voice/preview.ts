@@ -13,7 +13,7 @@ export interface VoicePreview {
   stop(): void;
 }
 
-export function previewVoice(apiKey: string, model: string, voice: string): VoicePreview {
+export function previewVoice(model: string, voice: string): VoicePreview {
   const audio = new VoiceAudio();
   audio.startOutput();
   let finish: () => void = () => {};
@@ -32,7 +32,6 @@ export function previewVoice(apiKey: string, model: string, voice: string): Voic
   };
   const session = new LiveSession(
     {
-      apiKey,
       model,
       voice,
       setup: () => ({

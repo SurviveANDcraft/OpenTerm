@@ -586,11 +586,8 @@ export interface Settings {
   /** Register the Windows shell hooks that let any folder be handed to OpenTerm —
    *  typing `OpenTerm` in Explorer's address bar, or the folder context menu. */
   shellIntegration: boolean;
-  /** OpenRouter API key, used to have an AI clarify a task's prompt before it's
-   *  delegated to an agent CLI. Empty = delegate the raw task text as-is. */
-  openrouterApiKey: string;
   /** Have an AI give raw inbox notifications (terminal prompts, error lines) a
-   *  readable name and one-line description. Needs `openrouterApiKey`; with no
+   *  readable name and one-line description. Needs the OpenRouter key; with no
    *  key set the raw text is shown as-is regardless of this setting. */
   aiInboxSummaries: boolean;
   /** Right-hand Agents panel: every agent as a card, plus an assistant that
@@ -617,9 +614,6 @@ export interface Settings {
   assistantPerms: Partial<Record<AssistantPerm, boolean>>;
   /** Chime when the assistant asks you to approve an action. */
   assistantApprovalSound: boolean;
-  /** Google AI Studio API key for the Agents panel's voice mode (Gemini Live).
-   *  Empty = the voice button leads to Settings. */
-  geminiApiKey: string;
   /** Prebuilt Gemini voice the assistant speaks with. */
   voiceName: string;
   /** What voice mode shows while you talk: the abstract orb, or a character
@@ -685,7 +679,6 @@ export const DEFAULT_SETTINGS: Settings = {
   soundPath: null,
   resumeAgentSessions: true,
   shellIntegration: true,
-  openrouterApiKey: "",
   // Off by default: this sends raw terminal output (which can carry tokens,
   // paths and command output) to OpenRouter, so it needs an explicit opt-in
   // rather than riding along with the API key being set for delegation.
@@ -703,7 +696,6 @@ export const DEFAULT_SETTINGS: Settings = {
   assistantModel: "",
   assistantPerms: {},
   assistantApprovalSound: true,
-  geminiApiKey: "",
   voiceName: "Aoede",
   voiceAvatar: "orb",
   voiceModel: "",

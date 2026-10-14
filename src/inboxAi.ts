@@ -22,6 +22,7 @@ import {
   setInboxSummary,
 } from "./inbox";
 import { store } from "./store";
+import { hasSecret } from "./secrets";
 
 /** Terminal tails can be long; the model only needs the shape of the failure,
  *  and this keeps a runaway stack trace from blowing out the request. */
@@ -65,7 +66,7 @@ function enrich(item: InboxItem): void {
 
 function aiEnabled(): boolean {
   const s = store.state.settings;
-  return s.aiInboxSummaries && s.openrouterApiKey.trim().length > 0;
+  return s.aiInboxSummaries && hasSecret("openrouter");
 }
 
 async function pump(): Promise<void> {
@@ -115,10 +116,7 @@ async function nameItem(item: InboxItem): Promise<Named> {
     .filter(Boolean)
     .join("\n");
 
-  const raw = await invoke<string>("name_notification", {
-    apiKey: store.state.settings.openrouterApiKey.trim(),
-    context,
-  });
+  const raw = await invoke<string>("name_notification", { context });
   return parseNamed(raw);
 }
 

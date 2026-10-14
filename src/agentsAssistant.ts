@@ -45,6 +45,7 @@ import { appToolDefs, isAppAction, isAppRead, planAppAction, runAppRead } from "
 import { modeDef, type ModeDef } from "./agentsModes";
 import { store } from "./store";
 import type { AssistantMode } from "./types";
+import { hasSecret } from "./secrets";
 
 const SYSTEM_PROMPT = `You are the agent monitor inside OpenTerm, a terminal workspace where the user runs AI coding agents (Claude Code, Codex, opencode, …) and shells side by side. You answer questions about what those terminals are doing and, when the mode below allows it, act on them for the user.
 
@@ -297,8 +298,7 @@ export class Conversation {
     /** Files attached to this question, already read (agentsFiles.ts). */
     files: { name: string; block: string }[] = []
   ): Promise<AskResult> {
-    const apiKey = store.state.settings.openrouterApiKey.trim();
-    if (!apiKey) throw new Error("Add an OpenRouter API key in Settings → AI to use the assistant.");
+    if (!hasSecret("openrouter")) throw new Error("Add an OpenRouter API key in Settings → AI to use the assistant.");
     if (this.busy) throw new Error("Still answering the previous question.");
     this.busy = true;
     this.stopFlag = false;
@@ -354,7 +354,7 @@ export class Conversation {
           break;
         }
         const last = step === mode.maxSteps - 1;
-        const turn = await this.call(apiKey, [...base, ...turnMsgs], tools, last ? "none" : null, (t) => {
+        const turn = await this.call([...base, ...turnMsgs], tools, last ? "none" : null, (t) => {
           cb.onText(text + stripToolMarkup(t));
         });
         spent.cost += turn.usage.cost;
@@ -392,7 +392,6 @@ export class Conversation {
       // answer instead of leaving the user with a blank reply.
       if (!text.trim() && !cancelled && !this.stopFlag && turnMsgs.length > 1) {
         const turn = await this.call(
-          apiKey,
           [
             ...base,
             ...turnMsgs,
@@ -576,7 +575,6 @@ export class Conversation {
   }
 
   private async call(
-    apiKey: string,
     messages: ApiMessage[],
     tools: unknown[],
     toolChoice: "none" | null,
@@ -594,7 +592,6 @@ export class Conversation {
     };
     const model = store.state.settings.assistantModel.trim() || null;
     return invoke<TurnResult>("assistant_chat", {
-      apiKey,
       requestId,
       messages,
       tools,

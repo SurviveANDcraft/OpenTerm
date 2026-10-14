@@ -1,4 +1,4 @@
-//! The main app's side of dictation: writes `config.json`, keeps the agent
+//! The main app's side of dictation: writes `config.json` (minus the API key), keeps the agent
 //! running (or stops it), manages the autostart entry, and serves the
 //! Settings tab (store snapshot, devices, level meter, commands).
 
@@ -133,6 +133,14 @@ pub fn dictation_sync(app: AppHandle, config: Config) -> Result<(), String> {
         signal(QUIT_EVENT);
     }
     Ok(())
+}
+
+/// A key was saved or removed: the agent picks it up on its next reload,
+/// which the command event triggers.
+pub fn key_changed() {
+    if ENABLED.load(Ordering::Relaxed) {
+        signal(COMMAND_EVENT);
+    }
 }
 
 /// Stops the agent and waits for it to exit, so the updater can replace the exe.

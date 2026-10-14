@@ -21,6 +21,7 @@ import type { ConfirmOptions } from "./confirm";
 import { createDictationTab } from "./dictation/settingsTab";
 import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE, VOICES } from "./voice/liveSession";
 import { previewVoice, type VoicePreview } from "./voice/preview";
+import { clearSecret, hasSecret, saveSecret, secretInfo, storageLabel, testSecret, type SecretName } from "./secrets";
 
 /** One backup on disk, as described by the `list_backups` command. */
 export interface BackupInfo {
@@ -144,6 +145,154 @@ export function createSettingsView(handlers: SettingsHandlers) {
     b.textContent = text;
     if (onClick) b.addEventListener("click", onClick);
     return b;
+  }
+
+  // ---------------------------------------------------------------- API keys
+  // Keys aren't part of the draft. Saving one writes it straight to the OS
+  // keystore (src/secrets.ts), so it never sits in state.json and never waits
+  // on the page's Save button. These two outlive render(): which keys are
+  // being replaced, and the last result each key's row showed.
+  const replacingKey = new Set<SecretName>();
+  const keyNotice = new Map<SecretName, { text: string; tone: "" | "ok" | "bad" }>();
+
+  const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+  /** A saved key shows as a status line with Test, Replace and Remove; with
+   *  none saved (or while replacing) it's a password box with Save and Test. */
+  function keyControl(name: SecretName, label: string, placeholder: string): HTMLElement {
+    const info = secretInfo(name);
+    const row = document.createElement("div");
+    row.className = "key-input-row";
+    const where = document.createElement("span");
+    const notice = document.createElement("span");
+    const say = (text: string, tone: "" | "ok" | "bad" = ""): void => {
+      keyNotice.set(name, { text, tone });
+      notice.className = `field-hint ${tone}`.trim();
+      notice.textContent = text;
+      notice.hidden = !text;
+    };
+    const busy = (on: boolean): void => {
+      row.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input").forEach((c) => (c.disabled = on));
+    };
+    // OpenRouter tells us the key's name in the account, which is how most
+    // people tell their keys apart.
+    const worked = (account: string | null, lead = "✓ Key works"): string =>
+      account ? `${lead} · "${account}" in your account` : lead;
+    const test = (value?: string): void => {
+      busy(true);
+      say("Checking the key…");
+      testSecret(name, value)
+        .then((account) => say(worked(account), "ok"))
+        .catch((e: unknown) => say(`Failed: ${errText(e)}`, "bad"))
+        .finally(() => busy(false));
+    };
+
+    if (info && !replacingKey.has(name)) {
+      // The start and end of the key, to match against the provider's key
+      // list. The rest never leaves the keystore.
+      const saved = document.createElement("span");
+      saved.className = "key-saved";
+      saved.textContent = info.hint;
+      saved.title = "The start and end of your saved key";
+      const remove = async (): Promise<void> => {
+        const ok = await handlers.onConfirm({
+          title: `Remove the ${label}?`,
+          message: "It's deleted from this computer. Features that use it stop working until you add a key again.",
+          confirmLabel: "Remove",
+          danger: true,
+        });
+        if (!ok) return;
+        busy(true);
+        try {
+          await clearSecret(name);
+          keyNotice.delete(name);
+          render();
+        } catch (e) {
+          say(errText(e), "bad");
+          busy(false);
+        }
+      };
+      row.append(
+        saved,
+        btn("btn-secondary", "Test key", () => test()),
+        btn("btn-ghost", "Replace", () => {
+          replacingKey.add(name);
+          keyNotice.delete(name);
+          render();
+        }),
+        btn("btn-ghost", "Remove", () => void remove())
+      );
+      where.className = info.storage === "plaintext" ? "field-hint bad" : "field-hint";
+      where.textContent = storageLabel(info.storage);
+    } else {
+      const input = document.createElement("input");
+      input.type = "password";
+      input.placeholder = placeholder;
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      const save = async (): Promise<void> => {
+        const value = input.value.trim();
+        if (!value) {
+          say("Enter a key first.");
+          return;
+        }
+        busy(true);
+        say("Saving…");
+        try {
+          await saveSecret(name, value);
+        } catch (e) {
+          say(errText(e), "bad");
+          busy(false);
+          return;
+        }
+        replacingKey.delete(name);
+        keyNotice.set(name, { text: "Saved. Checking the key…", tone: "" });
+        render();
+        // A typo is better caught now than the first time a feature needs it.
+        testSecret(name)
+          .then((account) => keyNotice.set(name, { text: worked(account, "✓ Saved, and the key works"), tone: "ok" }))
+          .catch((e: unknown) => keyNotice.set(name, { text: `Saved, but the check failed: ${errText(e)}`, tone: "bad" }))
+          .finally(() => render());
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void save();
+        }
+      });
+      const reveal = btn("btn-ghost", "Show", () => {
+        const show = input.type === "password";
+        input.type = show ? "text" : "password";
+        reveal.textContent = show ? "Hide" : "Show";
+      });
+      row.append(
+        input,
+        reveal,
+        btn("btn-primary", "Save", () => void save()),
+        btn("btn-secondary", "Test key", () => {
+          if (input.value.trim()) test(input.value);
+          else say("Enter a key first.");
+        })
+      );
+      if (info) {
+        row.append(
+          btn("btn-ghost", "Cancel", () => {
+            replacingKey.delete(name);
+            keyNotice.delete(name);
+            render();
+          })
+        );
+      }
+      where.className = "field-hint";
+      where.textContent = "Saved encrypted on this computer, never in OpenTerm's settings files.";
+    }
+
+    const last = keyNotice.get(name);
+    say(last?.text ?? "", last?.tone ?? "");
+    const wrap = document.createElement("div");
+    wrap.className = "control-stack";
+    wrap.append(row, where, notice);
+    return wrap;
   }
 
   // ---------------------------------------------------------------- layout
@@ -374,6 +523,8 @@ export function createSettingsView(handlers: SettingsHandlers) {
     justSaved = false;
     query = "";
     search.value = "";
+    replacingKey.clear();
+    keyNotice.clear();
     render();
     body.scrollTop = 0;
     // Opening settings is the moment the list needs to be current — a backup
@@ -913,9 +1064,8 @@ export function createSettingsView(handlers: SettingsHandlers) {
   }
 
   async function runAiFinder(): Promise<void> {
-    const key = draft.openrouterApiKey.trim();
     const q = aiQuery.value.trim();
-    if (!key || !q) return;
+    if (!hasSecret("openrouter") || !q) return;
     aiGoBtn.disabled = true;
     aiStatus.textContent = "Searching your backups…";
     try {
@@ -930,7 +1080,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
             sessions: b.sessionNames,
           }))
       );
-      const raw = await invoke<string>("find_in_backups", { apiKey: key, query: q, candidates });
+      const raw = await invoke<string>("find_in_backups", { query: q, candidates });
       aiPick = parseAiJson(raw);
       aiStatus.textContent = aiPick.filename
         ? "Top result is highlighted below."
@@ -1338,59 +1488,9 @@ export function createSettingsView(handlers: SettingsHandlers) {
       )
     );
 
-    const openrouterKey = document.createElement("input");
-    openrouterKey.type = "password";
-    openrouterKey.placeholder = "sk-or-…";
-    openrouterKey.value = s.openrouterApiKey;
-    openrouterKey.autocomplete = "off";
-    openrouterKey.spellcheck = false;
-    // `input`, not `change`: a key typed and left unfocused (or saved via the
-    // keyboard) used to be dropped because `change` only fires on blur.
-    openrouterKey.addEventListener("input", () => {
-      s.openrouterApiKey = openrouterKey.value.trim();
-      markDirty();
-    });
+    const keyWrap = keyControl("openrouter", "OpenRouter API key", "sk-or-…");
 
-    // Round-trips the key that's currently in the box (not the saved one) through
-    // the same command delegation uses, and prints whatever comes back verbatim.
-    // Without this the only signal a bad key gives is a silently un-refined prompt.
-    const testStatus = document.createElement("span");
-    testStatus.className = "field-hint";
-    const revealBtn = btn("btn-ghost", "Show", () => {
-      const show = openrouterKey.type === "password";
-      openrouterKey.type = show ? "text" : "password";
-      revealBtn.textContent = show ? "Hide" : "Show";
-    });
-    const testBtn = btn("btn-secondary", "Test key", () => {
-      const key = openrouterKey.value.trim();
-      testStatus.className = "field-hint";
-      if (!key) {
-        testStatus.textContent = "Enter a key first.";
-        return;
-      }
-      testBtn.disabled = true;
-      testStatus.textContent = "Contacting OpenRouter…";
-      invoke<string>("enhance_prompt", { apiKey: key, prompt: "Say OK." })
-        .then(() => {
-          testStatus.textContent = "✓ Key works";
-          testStatus.classList.add("ok");
-        })
-        .catch((e: unknown) => {
-          testStatus.textContent = `Failed: ${e instanceof Error ? e.message : String(e)}`;
-          testStatus.classList.add("bad");
-        })
-        .finally(() => {
-          testBtn.disabled = false;
-        });
-    });
-    const keyInputRow = document.createElement("div");
-    keyInputRow.className = "key-input-row";
-    keyInputRow.append(openrouterKey, revealBtn, testBtn);
-    const keyWrap = document.createElement("div");
-    keyWrap.className = "control-stack";
-    keyWrap.append(keyInputRow, testStatus);
-
-    const hasKey = !!s.openrouterApiKey.trim();
+    const hasKey = hasSecret("openrouter");
     const aiInbox = toggle(s.aiInboxSummaries, (v) => {
       s.aiInboxSummaries = v;
       markDirty();
@@ -1471,57 +1571,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
     );
 
     // Voice mode talks to Google directly (Gemini Live), so it has its own key.
-    const geminiKey = document.createElement("input");
-    geminiKey.type = "password";
-    geminiKey.placeholder = "AIza…";
-    geminiKey.value = s.geminiApiKey;
-    geminiKey.autocomplete = "off";
-    geminiKey.spellcheck = false;
-    geminiKey.addEventListener("input", () => {
-      s.geminiApiKey = geminiKey.value.trim();
-      markDirty();
-    });
-    const geminiStatus = document.createElement("span");
-    geminiStatus.className = "field-hint";
-    const geminiReveal = btn("btn-ghost", "Show", () => {
-      const show = geminiKey.type === "password";
-      geminiKey.type = show ? "text" : "password";
-      geminiReveal.textContent = show ? "Hide" : "Show";
-    });
-    const geminiTest = btn("btn-secondary", "Test key", () => {
-      const key = geminiKey.value.trim();
-      geminiStatus.className = "field-hint";
-      if (!key) {
-        geminiStatus.textContent = "Enter a key first.";
-        return;
-      }
-      geminiTest.disabled = true;
-      geminiStatus.textContent = "Contacting Gemini…";
-      // Listing models costs nothing and fails the same way a bad key would.
-      fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key } })
-        .then(async (r) => {
-          if (r.ok) {
-            geminiStatus.textContent = "✓ Key works";
-            geminiStatus.classList.add("ok");
-            return;
-          }
-          const body = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
-          throw new Error(body?.error?.message ?? `HTTP ${r.status}`);
-        })
-        .catch((e: unknown) => {
-          geminiStatus.textContent = `Failed: ${e instanceof Error ? e.message : String(e)}`;
-          geminiStatus.classList.add("bad");
-        })
-        .finally(() => {
-          geminiTest.disabled = false;
-        });
-    });
-    const geminiRow = document.createElement("div");
-    geminiRow.className = "key-input-row";
-    geminiRow.append(geminiKey, geminiReveal, geminiTest);
-    const geminiWrap = document.createElement("div");
-    geminiWrap.className = "control-stack";
-    geminiWrap.append(geminiRow, geminiStatus);
+    const geminiWrap = keyControl("gemini", "Gemini API key", "AIza…");
 
     const voiceName = document.createElement("select");
     for (const v of VOICES) {
@@ -1536,8 +1586,8 @@ export function createSettingsView(handlers: SettingsHandlers) {
       markDirty();
     });
 
-    // Hear the selected voice before committing to it. Uses the key and model
-    // currently in the boxes, saved or not.
+    // Hear the selected voice before committing to it. Uses the saved key and
+    // the model currently in the box, saved or not.
     const voiceStatus = document.createElement("span");
     voiceStatus.className = "field-hint";
     let sample: VoicePreview | null = null;
@@ -1546,15 +1596,14 @@ export function createSettingsView(handlers: SettingsHandlers) {
         sample.stop();
         return;
       }
-      const key = geminiKey.value.trim();
       voiceStatus.className = "field-hint";
-      if (!key) {
-        voiceStatus.textContent = "Add a Gemini API key first.";
+      if (!hasSecret("gemini")) {
+        voiceStatus.textContent = "Save a Gemini API key first.";
         return;
       }
       voiceStatus.textContent = "";
       voicePreview.textContent = "Stop";
-      const mine = previewVoice(key, voiceModel.value.trim() || DEFAULT_LIVE_MODEL, voiceName.value);
+      const mine = previewVoice(voiceModel.value.trim() || DEFAULT_LIVE_MODEL, voiceName.value);
       sample = mine;
       mine.done
         .catch((e: unknown) => {
