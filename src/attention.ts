@@ -738,6 +738,19 @@ export function setPaneScreenReader(fn: ScreenReader): void {
   readScreen = fn;
 }
 
+/** Panes whose status comes straight from the agent's own lifecycle hooks
+ *  (see agentHooks.ts). For these, every guess below stands down — the byte
+ *  and screen prompt checks, the mid-turn footer poll, the sub-agent claims —
+ *  and the hook module drives the flags instead. The guessing only comes back
+ *  if the hooks go quiet for good (the agent exited, the hooks were turned off).
+ *
+ *  The one guess kept, for panes in `hookScreenErrors`, is a final error
+ *  painted on screen: Codex has no hook for a turn that died. */
+const hookDriven = new Set<string>();
+const hookScreenErrors = new Set<string>();
+let hookInput: ((id: string, data: string) => void) | null = null;
+let hookForget: ((id: string) => void) | null = null;
+
 /** Timer per pane that confirms a prompt once output has gone quiet. */
 const settleTimers = new Map<string, number>();
 /** Signature of the prompt we last chimed for, per pane — so a redraw or replay
@@ -798,6 +811,11 @@ export function feedPaneOutput(id: string, bytes: Uint8Array): void {
     decoders.set(id, dec);
   }
   const chunk = dec.decode(bytes, { stream: true });
+  if (hookDriven.has(id)) {
+    lastOutputAt.set(id, Date.now());
+    if (hookScreenErrors.has(id)) scheduleHookErrorCheck(id);
+    return;
+  }
   let tail = (tails.get(id) ?? "") + chunk;
   if (tail.length > TAIL_WINDOW) tail = tail.slice(-TAIL_WINDOW);
   tails.set(id, tail);
@@ -866,7 +884,13 @@ export function feedPaneOutput(id: string, bytes: Uint8Array): void {
 
 /** Flags a pane and — the first time this particular prompt/error is seen —
  *  chimes, flashes the taskbar and files an inbox item. */
-function raise(id: string, kind: "prompt" | "error", sig: string, message: string): void {
+function raise(
+  id: string,
+  kind: "prompt" | "error",
+  sig: string,
+  message: string,
+  opts: { title?: string; raw?: boolean } = {},
+): void {
   // Blocked on a question, or dead: either way it is not mid-turn any more.
   setWorking(id, false);
   setAttention(id, true, kind);
@@ -878,9 +902,10 @@ function raise(id: string, kind: "prompt" | "error", sig: string, message: strin
   addInboxItem({
     kind: kind === "prompt" ? "approval" : "error",
     message,
+    title: opts.title,
     // Straight off the terminal — box-drawing, prompt glyphs and all. The AI
-    // namer turns this into something readable.
-    raw: true,
+    // namer turns this into something readable. Hook items arrive composed.
+    raw: opts.raw ?? true,
     sessionId: session?.id,
     sessionName: session?.name,
     paneId: id,
@@ -934,7 +959,19 @@ function findErrorLine(plain: string): string | null {
 /** Call when the user sends input to a pane — they're responding, so clear the
  *  flag immediately and reset dedup state (the next prompt, even an identical
  *  one, should chime again). */
-export function clearPaneAttention(id: string): void {
+export function clearPaneAttention(id: string, data = ""): void {
+  if (hookDriven.has(id)) {
+    // The hook module decides what a keystroke means — an arrow key moving
+    // through a permission menu is not an answer.
+    if (screenFlagged.delete(id)) {
+      const sig = chimedSig.get(id);
+      if (sig) screenAcked.set(id, sig);
+      setAttention(id, false);
+      chimedSig.delete(id);
+    }
+    hookInput?.(id, data);
+    return;
+  }
   if (screenFlagged.delete(id)) {
     const sig = chimedSig.get(id);
     if (sig) screenAcked.set(id, sig);
@@ -951,6 +988,9 @@ export function clearPaneAttention(id: string): void {
 
 /** Call when a pane is torn down, to stop tracking it. */
 export function forgetPane(id: string): void {
+  hookForget?.(id);
+  hookDriven.delete(id);
+  hookScreenErrors.delete(id);
   const hadStatus = isPaneWaiting(id) || isPaneWorking(id) || paneSubagentCount(id) > 0;
   needsAttention.delete(id);
   attentionKind.delete(id);
@@ -1036,6 +1076,7 @@ function pollWorking(): void {
     ...subagentClaims.keys(),
   ]);
   for (const id of candidates) {
+    if (hookDriven.has(id)) continue;
     const spokeRecently = now - (lastOutputAt.get(id) ?? 0) < OUTPUT_QUIET_MS;
     const flagged = working.get(id) ?? false;
     const tracking = (subagents.get(id) ?? 0) > 0 || subagentClaims.has(id);
@@ -1125,6 +1166,117 @@ function liveSubagentCount(id: string, claims: SubagentClaim[], now: number): nu
 }
 
 window.setInterval(pollWorking, WORKING_POLL_MS);
+
+// ------------------------------------------------------------ hook-driven
+
+/** What the hook module says a pane is doing right now. */
+export interface HookPaneStatus {
+  working: boolean;
+  subagents: number;
+  /** A permission or question the agent is blocked on, or the error that
+   *  ended its turn. `sig` is stable per occurrence, so it chimes once. */
+  attention: { kind: "prompt" | "error"; sig: string; title: string; message: string } | null;
+}
+
+/** Hands a pane over to (or back from) the agent's hooks. Either way the
+ *  pane starts from a clean slate, so nothing one source raised lingers under
+ *  the other. */
+export function setHookDriven(id: string, on: boolean, screenErrors = false): void {
+  if (on && screenErrors) hookScreenErrors.add(id);
+  else hookScreenErrors.delete(id);
+  if (on === hookDriven.has(id)) return;
+  if (on) hookDriven.add(id);
+  else hookDriven.delete(id);
+  const pending = settleTimers.get(id);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+    settleTimers.delete(id);
+  }
+  screenFlagged.delete(id);
+  tails.delete(id);
+  chimedSig.delete(id);
+  workingSig.delete(id);
+  workingMovedAt.delete(id);
+  subagentClaims.delete(id);
+  setSubagents(id, 0);
+  setWorking(id, false);
+  setAttention(id, false);
+}
+
+export function isHookDriven(id: string): boolean {
+  return hookDriven.has(id);
+}
+
+/** Applies a hook-driven pane's status. A new attention `sig` chimes, files an
+ *  inbox item and flashes the taskbar exactly like a detected prompt does. */
+export function applyHookStatus(id: string, st: HookPaneStatus): void {
+  if (!hookDriven.has(id)) return;
+  setSubagents(id, st.subagents);
+  if (st.attention) {
+    screenFlagged.delete(id);
+    raise(id, st.attention.kind, st.attention.sig, st.attention.message, {
+      title: st.attention.title,
+      raw: false,
+    });
+    return;
+  }
+  // A Codex error read off the screen stays up until the user responds or the
+  // next turn starts — which is when the hooks report working again.
+  if (screenFlagged.has(id) && !st.working) return;
+  screenFlagged.delete(id);
+  if (needsAttention.get(id)) {
+    setAttention(id, false);
+    chimedSig.delete(id);
+  }
+  setWorking(id, st.working);
+}
+
+export function setHookHandlers(input: (id: string, data: string) => void, forget: (id: string) => void): void {
+  hookInput = input;
+  hookForget = forget;
+}
+
+/** Whether a harness's mid-turn footer is painted on the pane right now. Only
+ *  ever used to *end* a turn the hooks couldn't see end (the user pressed Esc,
+ *  or rejected a permission) — never to start one. */
+export function screenShowsWorking(id: string): boolean {
+  const screen = readScreen(id, WORKING_SCREEN_LINES);
+  return !!screen && screen.split("\n").some(isWorkingLine);
+}
+
+/** Whether a blocking prompt panel is painted on the pane right now — the same
+ *  narrow use: confirming a question really was answered. */
+export function screenShowsPrompt(id: string): boolean {
+  const screen = readScreen(id, SCREEN_PROMPT_LINES);
+  return !!screen && readScreenAttention(screen)?.kind === "prompt";
+}
+
+/** Codex's one hook-less failure: a turn that died prints a `■` error line and
+ *  stops. Checked once output settles, and only while no turn is running. */
+function scheduleHookErrorCheck(id: string): void {
+  const pending = settleTimers.get(id);
+  if (pending !== undefined) clearTimeout(pending);
+  settleTimers.set(
+    id,
+    window.setTimeout(() => {
+      settleTimers.delete(id);
+      if (!hookDriven.has(id) || working.get(id)) return;
+      if (needsAttention.get(id) && !screenFlagged.has(id)) return;
+      const screen = readScreen(id, SCREEN_PROMPT_LINES);
+      const hit = screen ? readScreenAttention(screen) : null;
+      if (hit?.kind === "error" && hit.sig !== screenAcked.get(id)) {
+        screenFlagged.add(id);
+        raise(id, "error", hit.sig, hit.message);
+      } else if (!hit) {
+        screenAcked.delete(id);
+        if (screenFlagged.delete(id)) {
+          setAttention(id, false);
+          chimedSig.delete(id);
+        }
+      }
+    }, SETTLE_MS),
+  );
+}
 
 /** The attention chime for other features (the assistant's approval cards),
  *  sharing the cooldown so two alerts at once don't double up. Callers check

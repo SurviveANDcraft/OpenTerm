@@ -122,6 +122,7 @@ import { trash } from "./trash";
 import { createTrashToast } from "./trashToast";
 import { buildGithubReviewPrompt, checkGithubStatus, GitStatusResult } from "./git";
 import { fetchLivePaneHarnesses, forgetPaneUsage } from "./usage";
+import { syncAgentHooks } from "./agentHooks";
 import { createFileViewerPanel } from "./editor";
 import {
   PaneFile,
@@ -2768,10 +2769,12 @@ onSecretsChange(() => {
 const settingsView = createSettingsView({
   onSave: (draft) => {
     const shellChanged = draft.shellIntegration !== store.state.settings.shellIntegration;
+    const hooksChanged = draft.agentHooks !== store.state.settings.agentHooks;
     store.state.settings = draft;
     applySettingsLive();
     // Explicit toggle, so register even from a dev build (unlike the boot refresh).
     if (shellChanged) void syncShellIntegration(draft.shellIntegration);
+    if (hooksChanged) void syncAgentHooks(draft.agentHooks);
     // Settings and theme tokens feed the dictation agent's config.
     void syncDictation(draft);
   },
@@ -3912,6 +3915,10 @@ async function boot(): Promise<void> {
 
   // Keep the registry pointing at the current binary — the path moves on update.
   void syncShellIntegration(store.state.settings.shellIntegration, true);
+
+  // Exact agent status: (re)install the Claude Code / Codex hooks so they point
+  // at this binary, and start listening for them.
+  void syncAgentHooks(store.state.settings.agentHooks);
 
   // Start (or stop) the dictation agent to match settings, and honor a launch
   // from its tray menu's "Dictation settings…".

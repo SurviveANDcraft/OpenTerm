@@ -1790,6 +1790,11 @@ export function createSettingsView(handlers: SettingsHandlers) {
       markDirty();
     });
 
+    const agentHooks = toggle(s.agentHooks, (v) => {
+      s.agentHooks = v;
+      markDirty();
+    });
+
     cats.notifications.push(
       section(
         "Attention alerts",
@@ -1798,6 +1803,15 @@ export function createSettingsView(handlers: SettingsHandlers) {
           field("Play a sound", soundNotifications, { keywords: "audio chime alert" }),
           soundField,
           field("Flash taskbar icon", taskbarFlash, { keywords: "taskbar blink" }),
+          field("Exact agent status", agentHooks, {
+            desc: "Claude Code and Codex report when they're working, waiting on you or running sub-agents, instead of OpenTerm reading it off the screen.",
+            tip:
+              "Adds a small OpenTerm hook to Claude Code's settings.json and Codex's hooks.json " +
+              "(and marks it trusted in Codex). It only reports status — it never approves or " +
+              "blocks anything — and does nothing outside OpenTerm. Agents started before you " +
+              "turn this on pick it up on their next launch. Turning it off removes the hook.",
+            keywords: "hooks claude codex status permission subagent detection exact",
+          }),
           field("Chime when the assistant needs approval", approvalSound, {
             desc: "Plays the sound above when the Agents panel asks you to approve an action.",
             keywords: "agents panel assistant approve act auto chime sound",
