@@ -33,6 +33,7 @@ import { cardSummary } from "./agentsSummary";
 import {
   ACTION_TOOL_DEFS,
   isActionTool,
+  paneState,
   planAction,
   refreshShellIdle,
   tierOfTool,
@@ -43,6 +44,7 @@ import {
 } from "./agentsActions";
 import { appToolDefs, isAppAction, isAppRead, planAppAction, runAppRead } from "./agentsAppActions";
 import { modeDef, type ModeDef } from "./agentsModes";
+import { pingUser } from "./attention";
 import { store } from "./store";
 import type { AssistantMode } from "./types";
 import { hasSecret } from "./secrets";
@@ -55,7 +57,9 @@ You can also see and, when the mode allows, manage the app itself: each session'
 
 Style: brief and scannable. Refer to terminals as [T3]: the UI turns that into a link, so don't also repeat the title unless it helps. For overviews, one short line per terminal. Plain text, **bold** sparingly, \`code\` for commands and paths, "- " bullets. No headings, no tables, no preamble, don't restate the question. Never use em dashes; use commas, periods or colons. Only report what you have actually seen; if a screen is ambiguous, say so.
 
-Notifications: every command you run and every prompt you send to an agent is watched automatically. When that terminal finishes you get an automatic message with its output attached. So after starting something, never wait, poll or guess the result: end your turn with one line saying you'll report back when it's done. When the notification arrives, give the user the actual result: the agent's answer, the command's outcome, the error. Never just say "it finished". If the attached output isn't enough, read_terminal first. If you planned a next step for that moment (like prompting an agent once it has started), do it then. Pass notify: false only when the result truly doesn't matter. For a terminal you didn't start (the user asks "tell me when T3 is done"), call notify_when_done.
+Notifications: every command you run and every prompt you send to an agent is watched automatically. When that terminal finishes you get an automatic message with its output attached. So after starting something, never wait, poll or guess the result: end your turn with one line saying you'll report back when it's done. When the notification arrives, give the user the actual result: the agent's answer, the command's outcome, the error. Never just say "it finished". If the attached output isn't enough, read_terminal first. If you planned a next step for that moment (like prompting an agent once it has started), do it then. Pass notify: false only when the result truly doesn't matter. For a terminal you didn't start (the user asks "tell me when T3 is done"), call notify_when_done. It only reports once the terminal has actually worked and then stopped, so a terminal that is idle now is reported after its next run finishes, not right away. If its result says the terminal is idle, tell the user that in one line.
+
+Pinging the user: notify_user plays the notification sound, flashes the taskbar and files an inbox item. Call it when the user asked to be notified, pinged or told when something is done, once the result is in (usually in the turn of the automatic notification), with the actual outcome as the message. Also call it for anything urgent they'd want to hear while looking elsewhere. Don't use it for ordinary answers.
 
 The user can attach files to a question; each arrives as a <file> block with its name, path and content (documents and spreadsheets as extracted text). Answer from that content. A block marked content="not readable" gives you only the name and path: say you can't see inside it. To have an agent work on a file, pass it the path.
 
@@ -76,6 +80,26 @@ const WATCH_TOOL_DEF = {
         note: { type: "string", description: "What to do or check when it finishes" },
       },
       required: ["ref"],
+    },
+  },
+};
+
+/** Offered in every mode: it only pings the user. */
+const NOTIFY_TOOL = "notify_user";
+const NOTIFY_TOOL_DEF = {
+  type: "function",
+  function: {
+    name: NOTIFY_TOOL,
+    description:
+      "Ping the user: notification sound, taskbar flash and an inbox item. Use when they asked to be notified when something is done, once the result is in.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short headline, at most 6 words, e.g. \"Render finished\"" },
+        message: { type: "string", description: "One or two sentences with the actual outcome" },
+        ref: { type: "string", description: "Terminal ref this is about, e.g. T3 (optional)" },
+      },
+      required: ["title", "message"],
     },
   },
 };
@@ -114,8 +138,10 @@ export interface AskCallbacks {
   /** A tool started — a human label for the activity line. */
   onTool(label: string, paneIds: string[], tool: string): void;
   /** The model wants a message when this terminal finishes. Returns an error
-   *  to hand back to it, or null once the watch is set. */
-  watch(paneId: string, note: string): string | null;
+   *  to hand back to it, or null once the watch is set. `explicit` is a
+   *  notify_when_done call, as opposed to the automatic watch after an action:
+   *  it only reports once the terminal has been seen working. */
+  watch(paneId: string, note: string, explicit?: boolean): string | null;
   /** An action waits for the user. Resolves true to run it; must resolve
    *  false once `signal` aborts (the user stopped the request). */
   requestApproval(plan: ActionPlan, signal: AbortSignal): Promise<boolean>;
@@ -219,12 +245,31 @@ export function terminalsSnapshot(scope: Scope, roster: AgentInfo[] = listAgents
   }\n</terminals>`;
 }
 
+/** notify_user: pings the user with the assistant's own headline and text. */
+function runNotify(argsJson: string, ctx: ActionContext): { result: string; label: string; paneIds: string[] } {
+  let args: Record<string, unknown> = {};
+  try {
+    args = argsJson.trim() ? JSON.parse(argsJson) : {};
+  } catch {
+    /* falls through to the missing-text error */
+  }
+  const clip = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
+  const title = clip(args.title, 60);
+  const message = clip(args.message, 300);
+  if (!title && !message) return { result: "Error: give a title and a message.", label: "Notify you", paneIds: [] };
+  const id = typeof args.ref === "string" ? paneOfRef(args.ref) : null;
+  const paneId = id && ctx.inScope(id) ? id : undefined;
+  pingUser(title || "Assistant", message || title, paneId);
+  return { result: "The user was pinged.", label: `Notified you: ${title || message}`, paneIds: paneId ? [paneId] : [] };
+}
+
 /** Tool schemas for a mode. Tools for a permission the user switched off
  *  aren't sent at all. */
 export function toolDefsFor(mode: ModeDef, can: ActionContext["can"]): unknown[] {
   return [
     ...TOOL_DEFS,
     WATCH_TOOL_DEF,
+    NOTIFY_TOOL_DEF,
     ...appToolDefs(mode.actions, can),
     ...(mode.actions ? ACTION_TOOL_DEFS.filter((d) => can(tierOfTool(d.function.name))) : []),
   ];
@@ -522,8 +567,10 @@ export class Conversation {
       if (!p) {
         const run =
           c.name === WATCH_TOOL
-            ? this.runWatch(c.arguments, ctx, cb)
-            : isAppRead(c.name)
+            ? await this.runWatch(c.arguments, ctx, cb)
+            : c.name === NOTIFY_TOOL
+              ? runNotify(c.arguments, ctx)
+              : isAppRead(c.name)
               ? await runAppRead(c.name, c.arguments, ctx)
               : await runTool(c.name, c.arguments, ctx.inScope);
         cb.onTool(run.label, run.paneIds, c.name);
@@ -554,7 +601,11 @@ export class Conversation {
     return out;
   }
 
-  private runWatch(argsJson: string, ctx: ActionContext, cb: AskCallbacks): { result: string; label: string; paneIds: string[] } {
+  private async runWatch(
+    argsJson: string,
+    ctx: ActionContext,
+    cb: AskCallbacks
+  ): Promise<{ result: string; label: string; paneIds: string[] }> {
     let args: Record<string, unknown> = {};
     try {
       args = argsJson.trim() ? JSON.parse(argsJson) : {};
@@ -564,14 +615,20 @@ export class Conversation {
     const id = typeof args.ref === "string" ? paneOfRef(args.ref) : null;
     const a = id && ctx.inScope(id) ? agentByPane(id) : null;
     if (!a) return { result: `Error: no terminal "${String(args.ref)}" in scope.`, label: "Notify when done", paneIds: [] };
-    const err = cb.watch(a.paneId, typeof args.note === "string" ? args.note.trim().slice(0, 300) : "");
-    return err
-      ? { result: `Error: ${err}`, label: `Couldn't watch ${a.title}`, paneIds: [a.paneId] }
-      : {
-          result: `Watching ${a.ref}. You'll get a message when it finishes. Finish your answer now; don't wait.`,
-          label: `Will check back when ${a.title} finishes`,
-          paneIds: [a.paneId],
-        };
+    const err = cb.watch(a.paneId, typeof args.note === "string" ? args.note.trim().slice(0, 300) : "", true);
+    if (err) return { result: `Error: ${err}`, label: `Couldn't watch ${a.title}`, paneIds: [a.paneId] };
+    const state = await paneState(a.paneId);
+    const now =
+      state === "busy"
+        ? `${a.ref} is working right now.`
+        : state === "waiting"
+          ? `${a.ref} is waiting on the user right now; tell them.`
+          : `${a.ref} is idle right now: nothing is running there, so nothing has finished. Tell the user that.`;
+    return {
+      result: `Watching ${a.ref}. ${now} You'll get a message once it has worked and then stopped. Finish your answer now; don't wait.`,
+      label: `Will check back when ${a.title} finishes`,
+      paneIds: [a.paneId],
+    };
   }
 
   private async call(

@@ -1129,6 +1129,26 @@ window.setInterval(pollWorking, WORKING_POLL_MS);
 /** The attention chime for other features (the assistant's approval cards),
  *  sharing the cooldown so two alerts at once don't double up. Callers check
  *  their own setting. */
+/** The assistant's notify_user: the same ping a terminal prompt gets (chime,
+ *  taskbar flash, inbox item), with text the assistant wrote. */
+export function pingUser(title: string, message: string, paneId?: string): void {
+  // Asked for on purpose, so it skips the cooldown that keeps prompt bursts quiet.
+  if (store.state.settings.soundNotifications) {
+    lastSoundAt = Date.now();
+    invokeChime();
+  }
+  if (store.state.settings.taskbarFlash) void invoke("flash_taskbar_icon");
+  const session = paneId ? store.state.sessions.find((s) => collectLeaves(s.tree).includes(paneId)) : undefined;
+  addInboxItem({
+    kind: "assistant",
+    title,
+    message,
+    sessionId: session?.id,
+    sessionName: session?.name,
+    paneId,
+  });
+}
+
 export function playAttentionChime(): void {
   const now = Date.now();
   if (now - lastSoundAt < SOUND_COOLDOWN_MS) return;

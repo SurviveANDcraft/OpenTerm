@@ -53,7 +53,7 @@ function enrich(item: InboxItem): void {
   if (!item.raw) {
     // App-composed text: it already reads fine, so the name is just the kind
     // and the message becomes the description. Synchronous, no request.
-    item.title = KIND_TITLE[item.kind];
+    item.title ||= KIND_TITLE[item.kind];
     item.summary = item.message;
     item.aiState = "done";
     return;

@@ -86,6 +86,7 @@ const TOOL_ICON: Record<string, IconName> = {
   run_command: "play",
   prompt_agent: "paperPlane",
   notify_when_done: "bell",
+  notify_user: "bell",
   list_sessions: "search",
   list_tasks: "search",
   usage_stats: "info",
@@ -1045,19 +1046,52 @@ export function createAgentsPanel(host: AgentsPanelHost) {
 
   // ------------------------------------------------------------ watches
 
-  /** Terminals the assistant asked to hear back about (notify_when_done). */
-  const watches = new Map<string, { title: string; note: string; at: number; busy: boolean; quiet: number }>();
+  /** Terminals the assistant asked to hear back about: notify_when_done
+   *  (`explicit`), or the automatic watch after it typed into one. */
+  interface Watch {
+    title: string;
+    note: string;
+    at: number;
+    explicit: boolean;
+    /** Seen working for long enough to count (see WATCH_BUSY_TICKS). */
+    busy: boolean;
+    busyTicks: number;
+    quiet: number;
+  }
+  const watches = new Map<string, Watch>();
   let watchTimer: number | null = null;
   let watchChecking = false;
   const WATCH_TICK_MS = 1500;
   const MAX_WATCHES = 8;
-  /** A terminal never seen busy only counts as finished after this long, so a
-   *  command that hasn't visibly started yet isn't reported as done. */
+  /** An automatic watch never seen busy counts as finished after this long, so
+   *  a command too quick to catch still gets reported. Agents get longer: a
+   *  prompt always makes them work, it can just take a moment to show. An
+   *  explicit watch has no grace at all: an idle terminal hasn't finished
+   *  anything. */
   const WATCH_GRACE_MS = 5000;
+  const WATCH_AGENT_GRACE_MS = 30000;
+  /** Busy checks in a row before an explicit watch believes it: a status that
+   *  flickers on for one redraw isn't a run. */
+  const WATCH_BUSY_TICKS = 2;
+  /** Quiet checks in a row before "done": a prompt redraw between commands, or
+   *  an agent pausing between tool calls, isn't the end. */
+  const WATCH_QUIET_TICKS = 2;
+  const WATCH_AGENT_QUIET_TICKS = 3;
 
-  function addWatch(paneId: string, note: string): string | null {
-    if (!watches.has(paneId) && watches.size >= MAX_WATCHES) return `already watching ${MAX_WATCHES} terminals.`;
-    watches.set(paneId, { title: panes.get(paneId)?.title ?? refOf(paneId), note, at: Date.now(), busy: false, quiet: 0 });
+  function addWatch(paneId: string, note: string, explicit = false): string | null {
+    const prev = watches.get(paneId);
+    if (!prev && watches.size >= MAX_WATCHES) return `already watching ${MAX_WATCHES} terminals.`;
+    watches.set(paneId, {
+      title: panes.get(paneId)?.title ?? refOf(paneId),
+      note: note || prev?.note || "",
+      at: Date.now(),
+      // Asked for by name once: a later automatic watch on the same terminal
+      // keeps that strictness.
+      explicit: explicit || (prev?.explicit ?? false),
+      busy: false,
+      busyTicks: 0,
+      quiet: 0,
+    });
     watchTimer ??= window.setInterval(() => void checkWatches(), WATCH_TICK_MS);
     return null;
   }
@@ -1074,21 +1108,28 @@ export function createAgentsPanel(host: AgentsPanelHost) {
     try {
       for (const [id, w] of [...watches]) {
         const state = await paneState(id);
-        if (!watches.has(id)) continue;
+        if (watches.get(id) !== w) continue; // dropped or replaced meanwhile
         if (state === "busy") {
-          w.busy = true;
           w.quiet = 0;
+          if (++w.busyTicks >= (w.explicit ? WATCH_BUSY_TICKS : 1)) w.busy = true;
           continue;
         }
-        if (state !== "gone" && !w.busy && Date.now() - w.at < WATCH_GRACE_MS) continue;
-        // Two quiet checks in a row: a prompt redraw between commands isn't "done".
-        if (state === "done" && ++w.quiet < 2) continue;
+        w.busyTicks = 0;
+        if (state !== "gone" && !w.busy) {
+          // Nothing has run yet, so nothing has finished (or newly blocked).
+          if (w.explicit) continue;
+          const grace = agentByPane(id)?.brand ? WATCH_AGENT_GRACE_MS : WATCH_GRACE_MS;
+          if (Date.now() - w.at < grace) continue;
+        }
+        if (state === "done" && ++w.quiet < (agentByPane(id)?.brand ? WATCH_AGENT_QUIET_TICKS : WATCH_QUIET_TICKS)) continue;
         if (conversation.running) continue; // delivered on a later tick
         const what = state === "gone" ? "was closed" : state === "waiting" ? "is now waiting on the user" : "has finished";
         const label = `${w.title} ${state === "gone" ? "was closed" : state === "waiting" ? "needs you" : "finished"}`;
         const notice = `[Automatic notification, not typed by the user] ${refOf(id)} "${w.title}" ${what}.${w.note ? ` Your note: ${w.note}.` : ""}${
           state === "gone" ? "" : " Its latest output is attached."
-        } Tell the user the actual result now (the agent's answer, the outcome, any error), not just that it finished, then carry on with anything you planned for this moment.`;
+        } Tell the user the actual result now (the agent's answer, the outcome, any error), not just that it finished, then carry on with anything you planned for this moment.${
+          w.explicit ? " The user asked to hear about this one: also call notify_user with the result." : ""
+        }`;
         // A live voice conversation hears about it instead of the typed chat.
         if (voice.isActive()) {
           const output = state === "gone" ? "" : `

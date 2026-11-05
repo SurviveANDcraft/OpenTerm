@@ -29,6 +29,8 @@ export interface InboxPanelHandlers {
 }
 
 const ICONS: Record<InboxKind, string> = {
+  assistant:
+    '<svg viewBox="0 0 16 16" width="13" height="13"><path d="M4.2 11V7.4a3.8 3.8 0 0 1 7.6 0V11l1.2 1.4H3z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M6.6 13.6a1.5 1.5 0 0 0 2.8 0" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>',
   approval:
     '<svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 5v3.4l2.2 1.3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>',
   error:
