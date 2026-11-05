@@ -101,7 +101,7 @@ export interface ExplorerHandlers {
   onOpenFile(path: string, name: string): void;
   /** A file (or folder) row was dragged onto a terminal pane and dropped there. */
   onDropToPane(path: string, name: string, paneId: string): void;
-  /** Ctrl+Alt+drag of a file row: open it as a docked file *pane* in the grid,
+  /** Alt+drag of a file row: open it as a docked file *pane* in the grid,
    *  split off `paneId` along `region`, instead of typing its path into stdin. */
   onDockToPane(
     path: string,
@@ -149,14 +149,14 @@ function bindDrag(
     /** A non-pane target under the pointer (the Agents panel chat). */
     let zone: FileDropZone | null = null;
     let finished = false;
-    // Two destinations for the same gesture, told apart by Ctrl+Alt:
-    //   drag            -> type the path into that pane's stdin (unchanged)
-    //   Ctrl+Alt+drag   -> dock the file itself as a pane in the grid
-    // Alt alone deliberately stays path mode, so the existing muscle memory of
-    // Alt+dragging a path into an agent is untouched. Folders can't be docked
-    // (there is nothing to open), so they ignore the modifier entirely.
+    // Two destinations for the same gesture, told apart by Alt:
+    //   drag       -> type the path into that pane's stdin
+    //   Alt+drag   -> dock the file itself as a pane in the grid
+    // The Agents panel has no grid to dock into, so a drop there always hands
+    // over the path, Alt or not. Folders can't be docked (there is nothing to
+    // open), so they ignore the modifier entirely.
     const canDock = !entry.is_dir;
-    let dockMode = canDock && e.altKey && e.ctrlKey;
+    let dockMode = canDock && e.altKey;
     let region: DropRegion | null = null;
     let lastX = e.clientX;
     let lastY = e.clientY;
@@ -185,7 +185,7 @@ function bindDrag(
       targetEl?.classList.remove("file-drop-target");
       clearHints();
       zone?.setHover(false);
-      if (commit && zone && !dockMode) zone.drop([entry.path]);
+      if (commit && zone) zone.drop([entry.path]);
       else if (commit && targetEl?.dataset.paneId) {
         if (dockMode && region) {
           handlers.onDockToPane(entry.path, entry.name, targetEl.dataset.paneId, region, {
@@ -199,7 +199,7 @@ function bindDrag(
       targetEl = null;
     };
 
-    /** Alt/Ctrl can be pressed or released mid-drag, so the mode (and the
+    /** Alt can be pressed or released mid-drag, so the mode (and the
      *  targeting that goes with it) is re-resolved from the last pointer
      *  position rather than frozen at pointerdown. */
     const onModifier = (ev: KeyboardEvent) => {
@@ -207,7 +207,7 @@ function bindDrag(
       // Keep Alt from reaching the webview's menu-focus handling mid-drag —
       // it would steal focus and strand the gesture.
       if (ev.key === "Alt") ev.preventDefault();
-      const next = canDock && ev.altKey && ev.ctrlKey;
+      const next = canDock && ev.altKey;
       if (next === dockMode) return;
       dockMode = next;
       retarget(lastX, lastY);
@@ -235,7 +235,7 @@ function bindDrag(
       ghost!.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 14}px)`;
       lastX = ev.clientX;
       lastY = ev.clientY;
-      dockMode = canDock && ev.altKey && ev.ctrlKey;
+      dockMode = canDock && ev.altKey;
       retarget(ev.clientX, ev.clientY);
     };
 
@@ -244,17 +244,18 @@ function bindDrag(
      *  edge hints for a dock (the *region* picks where the new pane lands). */
     const retarget = (x: number, y: number): void => {
       if (!ghost) return;
-      ghost.classList.toggle("dock", dockMode);
-      const label = ghost.querySelector<HTMLElement>("span:last-child");
-      if (label) label.textContent = dockMode ? `Open as pane: ${entry.name}` : entry.name;
-      document.body.classList.toggle("dragging-file-dock", dockMode);
-
-      const z = dockMode ? null : fileDropZoneAt(x, y);
+      const z = fileDropZoneAt(x, y);
       if (z !== zone) {
         zone?.setHover(false);
         z?.setHover(true);
         zone = z;
       }
+      const docking = dockMode && !zone;
+      ghost.classList.toggle("dock", docking);
+      const label = ghost.querySelector<HTMLElement>("span:last-child");
+      if (label) label.textContent = docking ? `Open as pane: ${entry.name}` : entry.name;
+      document.body.classList.toggle("dragging-file-dock", docking);
+
       if (zone) {
         clearHints();
         region = null;

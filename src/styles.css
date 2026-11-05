@@ -6111,7 +6111,7 @@ body.ext-dragging .drop-hint[class*="region-"] {
   color: var(--accent);
 }
 
-/* ---- Ctrl+Alt+drag a file row: it becomes a pane, not a typed path ----
+/* ---- Alt+drag a file row: it becomes a pane, not a typed path ----
  *
  * The pill visibly changes character the moment the modifier lands, so the two
  * destinations of the same gesture are never ambiguous mid-drag. */

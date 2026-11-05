@@ -3093,10 +3093,9 @@ function dockFileHere(targetId: string, region: DropRegion): PaneFile | null {
   return pane;
 }
 
-/** Ctrl+Alt+drag of a row in the sidebar's Files view: the file skips the
+/** Alt+drag of a row in the sidebar's Files view: the file skips the
  *  full-screen viewer entirely and lands straight in the grid as a pane. Plain
- *  (and Alt-only) drags still type the path into a terminal -- see
- *  dropFileIntoPane -- so the existing gesture is untouched. */
+ *  drags still type the path into a terminal -- see dropFileIntoPane. */
 function dockFileFromSidebar(
   path: string,
   name: string,
@@ -3457,7 +3456,7 @@ window.addEventListener(
           return;
         }
         // The pane the chord should act on is the one being typed in, even if
-        // the click that focused it never ran (a fresh Ctrl+Alt drop focuses
+        // the click that focused it never ran (a fresh Alt+drag drop focuses
         // the editor directly).
         const s = sessionOfPane(focusedFile.id);
         if (s && focusedPane.get(s.id) !== focusedFile.id) {

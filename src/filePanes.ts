@@ -331,7 +331,7 @@ export function settleIn(el: HTMLElement, delay = 180): void {
 }
 
 /** Landing animation for a pane that was created by a drop rather than flown
- *  in by the morph (a Ctrl+Alt drag from the sidebar has no on-screen surface
+ *  in by the morph (an Alt+drag from the sidebar has no on-screen surface
  *  to carry across). The pane grows out of the point the file was dropped at,
  *  so the new tile still visibly comes *from* the gesture. */
 export function materializeIn(el: HTMLElement, at: { x: number; y: number }): void {
