@@ -586,6 +586,9 @@ export interface Settings {
   /** Register the Windows shell hooks that let any folder be handed to OpenTerm —
    *  typing `OpenTerm` in Explorer's address bar, or the folder context menu. */
   shellIntegration: boolean;
+  /** Read Claude Code's and Codex's status from their own lifecycle hooks
+   *  (installed into their user config) instead of guessing it from the screen. */
+  agentHooks: boolean;
   /** Have an AI give raw inbox notifications (terminal prompts, error lines) a
    *  readable name and one-line description. Needs the OpenRouter key; with no
    *  key set the raw text is shown as-is regardless of this setting. */
@@ -679,6 +682,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundPath: null,
   resumeAgentSessions: true,
   shellIntegration: true,
+  agentHooks: true,
   // Off by default: this sends raw terminal output (which can carry tokens,
   // paths and command output) to OpenRouter, so it needs an explicit opt-in
   // rather than riding along with the API key being set for delegation.

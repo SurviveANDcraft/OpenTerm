@@ -584,7 +584,7 @@ export class PaneTerm {
 
     this.sendInput = (d) => {
       void writePty(id, d);
-      clearPaneAttention(id);
+      clearPaneAttention(id, d);
       this.trackInput(d, handlers);
     };
     this.term.onData(this.sendInput);

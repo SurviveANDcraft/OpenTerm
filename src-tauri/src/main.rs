@@ -42,6 +42,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 // ScreenToClient is imported from Graphics::Gdi above.
 
+mod agent_hooks;
 mod assistant;
 mod browser;
 mod dictation;
@@ -135,6 +136,10 @@ fn spawn_pty(
         }
     }
     cmd.env("TERM", "xterm-256color");
+    // Tags every agent hook fired from inside this pane with the pane's id.
+    for (k, v) in agent_hooks::pty_env(&id) {
+        cmd.env(k, v);
+    }
     let dir = [cwd, fallback_cwd]
         .into_iter()
         .flatten()
@@ -190,6 +195,7 @@ fn spawn_pty(
         // Stop polling this shell's process tree; its recorded usage links stay
         // so the pane keeps the spend history the exited agent produced.
         usage::unregister_pty(&reader_id);
+        agent_hooks::forget_pane(&reader_id);
         let _ = reader_app.emit("pty-exit", PtyExit { id: reader_id });
     });
 
@@ -1723,6 +1729,12 @@ fn main() {
         dictation::run_agent(context());
         return;
     }
+    // Same exe again, as the agent-hook forwarder: reads one hook payload from
+    // stdin, hands it to the running app and exits — no window, no Tauri.
+    if std::env::args().any(|a| a == agent_hooks::HOOK_ARG) {
+        agent_hooks::run_forwarder();
+        return;
+    }
 
     tauri::Builder::default()
         // Must be the first plugin: it decides whether this process lives at all.
@@ -1752,6 +1764,7 @@ fn main() {
         .manage(PtyManager::default())
         .setup(|app| {
             let _ = app_handle().set(app.handle().clone());
+            agent_hooks::start(app.handle().clone());
 
             // Explorer launches us with the folder it was showing as our working
             // directory, so this is where the address-bar hand-off is decoded.
@@ -1859,6 +1872,8 @@ fn main() {
             usage::claude_usage_limit,
             usage::codex_usage_limit,
             usage::live_pane_harnesses,
+            agent_hooks::agent_hook_events,
+            agent_hooks::agent_hooks_sync,
             git::check_github_status,
             git::git_map,
             github::gh_status,

@@ -19,7 +19,9 @@ tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 winreg = "0.55"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: agent_hooks rewrites the user's agent settings files and
+# must keep their key order intact.
+serde_json = { version = "1", features = ["preserve_order"] }
 # Already in the tree via tauri; used directly for retry backoff, racing requests and cancelling them.
 tokio = { version = "1", default-features = false, features = ["time", "macros", "sync"] }
 portable-pty = "0.9"
