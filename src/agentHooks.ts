@@ -139,7 +139,13 @@ function drop(id: string): void {
 function statusOf(p: PaneHook): HookPaneStatus {
   const asks = [...p.asks.entries()];
   if (asks.length) {
-    const [key, ask] = asks[asks.length - 1];
+    // One blocked moment, one inbox item: the agent can describe the same
+    // dialog through two hooks (a question tool *and* a permission
+    // notification), so the episode is keyed by the ask that opened it, while
+    // the text comes from the most specific ask open — a tool call beats a
+    // generic notification.
+    const key = asks[0][0];
+    const ask = [...asks].reverse().find(([, a]) => a.exact)?.[1] ?? asks[asks.length - 1][1];
     const who = agentName(p.agent);
     const title = ask.kind === "question" ? `${who} has a question` : `${who} needs permission`;
     const what = ask.detail ?? (ask.tool ? `Use ${ask.tool}` : "");
@@ -278,9 +284,10 @@ function apply(ev: HookEvent): void {
     case "notification":
       switch (ev.notificationType) {
         case "permission_prompt":
-          // Usually doubles a PermissionRequest; only stands alone if that
-          // one didn't come through.
-          if (![...p.asks.values()].some((a) => a.kind === "permission")) {
+          // Claude sends this for every dialog — alongside a PermissionRequest,
+          // and alongside its own question tool. It only stands alone when
+          // nothing else has described what's on screen.
+          if (!p.asks.size) {
             p.asks.set("notify", { kind: "permission", tool: null, detail: ev.message, exact: false });
           }
           break;
