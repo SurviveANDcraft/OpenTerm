@@ -1209,9 +1209,18 @@ export function isHookDriven(id: string): boolean {
 
 /** Applies a hook-driven pane's status. A new attention `sig` chimes, files an
  *  inbox item and flashes the taskbar exactly like a detected prompt does. */
-export function applyHookStatus(id: string, st: HookPaneStatus): void {
+export function applyHookStatus(id: string, st: HookPaneStatus, silent = false): void {
   if (!hookDriven.has(id)) return;
   setSubagents(id, st.subagents);
+  if (st.attention && silent) {
+    // Restoring state after a reload: the user was told about this already.
+    // Mark it as chimed so the live event stream won't announce it again.
+    screenFlagged.delete(id);
+    setWorking(id, false);
+    setAttention(id, true, st.attention.kind);
+    chimedSig.set(id, st.attention.sig);
+    return;
+  }
   if (st.attention) {
     screenFlagged.delete(id);
     raise(id, st.attention.kind, st.attention.sig, st.attention.message, {

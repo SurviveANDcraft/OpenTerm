@@ -96,6 +96,9 @@ const shownSig = new Map<string, string>();
 let enabled = false;
 let started = false;
 let lastSeq = 0;
+/** True while replaying events from before this frontend loaded. Nothing is
+ *  rendered then; the end state is applied once, silently (see restore). */
+let restoring = false;
 
 const AGENT_NAME: Record<string, string> = { claude: "Claude Code", codex: "Codex" };
 
@@ -176,7 +179,7 @@ function statusOf(p: PaneHook): HookPaneStatus {
  *  everything else applies at once. */
 function render(id: string): void {
   const p = panes.get(id);
-  if (!p) return;
+  if (!p || restoring) return;
   const st = statusOf(p);
   const pending = raiseTimers.get(id);
   if (pending !== undefined) {
@@ -341,6 +344,23 @@ function apply(ev: HookEvent): void {
   render(id);
 }
 
+/** Applies the replayed state without announcing any of it — a reload is not
+ *  news. What the replay can't know is what the user did meanwhile: an ask
+ *  whose panel is no longer on screen was answered, and a past error was
+ *  already reported. Only clearing is inferred, never raising. */
+function restore(): void {
+  for (const [id, p] of panes) {
+    for (const t of p.timers) clearTimeout(t);
+    p.timers = [];
+    p.error = null;
+    if (p.asks.size && !screenShowsPrompt(id)) p.asks.clear();
+    const st = statusOf(p);
+    if (st.attention) shownSig.set(id, st.attention.sig);
+    else shownSig.delete(id);
+    applyHookStatus(id, st, true);
+  }
+}
+
 /** Keys that answer a permission menu, as opposed to moving through it. */
 function answersMenu(data: string): boolean {
   return /[\r\n]/.test(data) || /^[0-9yYnNaApP]$/.test(data) || data === "\x1b" || data === "\x03";
@@ -457,10 +477,14 @@ export async function syncAgentHooks(on: boolean): Promise<{ claude: string; cod
     // agents mid-turn), then drain what arrived meanwhile — seq dedups both.
     try {
       const past = await invoke<HookEvent[]>("agent_hook_events");
+      restoring = true;
       for (const ev of past) apply(ev);
     } catch {
       /* nothing to replay */
+    } finally {
+      restoring = false;
     }
+    restore();
     replaying = false;
     buffered.sort((a, b) => a.seq - b.seq).forEach(apply);
     window.setInterval(() => void reapMissing(), 3000);
