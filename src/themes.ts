@@ -29,8 +29,35 @@ export interface Theme {
 
 export const THEMES: Theme[] = [
   {
+    // The brand's own colours: the icon's navy-black and slate tiles, its sky
+    // blue, and the website's text and status tones.
     id: "openterm",
     name: "OpenTerm (Default)",
+    category: "Minimal",
+    vars: {
+      "--bg-app": "#0c0e14",
+      "--bg-sidebar": "#10131b",
+      "--bg-pane": "#0e1118",
+      "--bg-raised": "#181c26",
+      "--bg-hover": "#1e2330",
+      "--border": "#262c3a",
+      "--border-soft": "#1b202b",
+      "--text": "#eceef2",
+      "--text-dim": "#9aa0ae",
+      "--text-faint": "#646b7a",
+      "--accent": "#4fc3f7",
+      "--accent-dim": "rgba(79, 195, 247, 0.14)",
+      "--danger": "#eb8c8c",
+      "--syn-func": "#4fc3f7",
+      "--syn-link": "#4fc3f7",
+      "--syn-const": "#e8c46a",
+    },
+  },
+  {
+    // The original look, warm gold on near-black: the default until the
+    // OpenTerm theme took the brand colours.
+    id: "og",
+    name: "OG",
     category: "Minimal",
     vars: {
       "--bg-app": "#0b0d10",

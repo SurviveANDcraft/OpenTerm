@@ -40,8 +40,8 @@ export interface OnboardingOptions {
   folder?: string | null;
 }
 
-/** A curated nine rather than all 22 themes. The full set is one click away in
- *  Settings, and a first-run grid of 22 is a decision, not a delight. */
+/** A curated nine rather than all 23 themes. The full set is one click away in
+ *  Settings, and a first-run grid of 23 is a decision, not a delight. */
 const FEATURED_THEMES = [
   "openterm",
   "tokyonight",

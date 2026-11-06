@@ -6,19 +6,19 @@
 
 :root {
   /* palette (overridden per theme) */
-  --bg-app: #0b0d10;
-  --bg-sidebar: #10131a;
-  --bg-pane: #0d1015;
-  --bg-raised: #171b23;
-  --bg-hover: #1b2029;
-  --border: #202634;
-  --border-soft: #181d26;
-  --text: #e7eaf0;
-  --text-dim: #8b93a5;
-  --text-faint: #5f6878;
-  --accent: #e8b45a;
-  --accent-dim: rgba(232, 180, 90, 0.14);
-  --danger: #e06c75;
+  --bg-app: #0c0e14;
+  --bg-sidebar: #10131b;
+  --bg-pane: #0e1118;
+  --bg-raised: #181c26;
+  --bg-hover: #1e2330;
+  --border: #262c3a;
+  --border-soft: #1b202b;
+  --text: #eceef2;
+  --text-dim: #9aa0ae;
+  --text-faint: #646b7a;
+  --accent: #4fc3f7;
+  --accent-dim: rgba(79, 195, 247, 0.14);
+  --danger: #eb8c8c;
 
   /* structure */
   --radius-sm: 5px;
@@ -75,7 +75,7 @@
   --accent-text: color-mix(in srgb, var(--accent) 92%, black);
   /* Overridden per-theme in themes.ts (applyTheme) with a real black/white
      pick based on --accent's luminance — this is just the pre-JS fallback
-     for the default (dark, gold-accent) theme. */
+     for the default (dark, sky-blue accent) theme. */
   --on-accent: #14151a;
 
   /* elevation — tinted to the app background, not pure black */
