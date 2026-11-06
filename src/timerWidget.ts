@@ -12,6 +12,7 @@
  *  with a goal and one-click lengths. */
 import "./timer.css";
 import { createIsland } from "./islandMorph";
+import { createFaceCarousel } from "./timerFaces";
 import { store } from "./store";
 import {
   addTime,
@@ -90,8 +91,6 @@ function button(cls: string, html: string, label: string, onClick: () => void): 
 
 const SMALL_R = 7.4;
 const SMALL_C = 2 * Math.PI * SMALL_R;
-const BIG_R = 58;
-const BIG_C = 2 * Math.PI * BIG_R;
 
 const PRESETS: [string, number][] = [
   ["1m", 60_000],
@@ -149,33 +148,9 @@ export function createTimerWidget(opts: { onShownChange(): void }): TimerWidget 
 
   // Active view.
   const activeView = h("div", "tm-active");
-  const bigDial = h("div", "tm-bigdial");
-  const ticks = Array.from({ length: 60 }, (_, i) => {
-    const major = i % 5 === 0;
-    const a = (i / 60) * Math.PI * 2;
-    const r1 = major ? 65.5 : 66.5;
-    const r2 = 69;
-    const x1 = 70 + r1 * Math.sin(a);
-    const y1 = 70 - r1 * Math.cos(a);
-    const x2 = 70 + r2 * Math.sin(a);
-    const y2 = 70 - r2 * Math.cos(a);
-    return `<line class="${major ? "maj" : ""}" x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>`;
-  }).join("");
-  bigDial.innerHTML = `<svg viewBox="0 0 140 140" aria-hidden="true">
-      <defs><linearGradient id="tm-grad" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" style="stop-color: color-mix(in srgb, var(--accent) 70%, white)"/>
-        <stop offset="1" style="stop-color: var(--accent)"/>
-      </linearGradient></defs>
-      <g class="tm-ticks">${ticks}</g>
-      <circle class="tm-bigtrack" cx="70" cy="70" r="${BIG_R}"/>
-      <circle class="tm-bigarc" cx="70" cy="70" r="${BIG_R}" stroke="url(#tm-grad)"/>
-      <g class="tm-tip"><circle cx="70" cy="${70 - BIG_R}" r="4.6"/></g>
-    </svg>
-    <div class="tm-bigcenter"><div class="tm-bigtime"></div><div class="tm-biggoal"></div></div>`;
-  const bigArc = bigDial.querySelector<SVGCircleElement>(".tm-bigarc")!;
-  const tip = bigDial.querySelector<SVGGElement>(".tm-tip")!;
-  const bigTime = bigDial.querySelector<HTMLElement>(".tm-bigtime")!;
-  const bigGoal = bigDial.querySelector<HTMLElement>(".tm-biggoal")!;
+  // The dial: one of several watch faces, swiped between (timerFaces.ts).
+  const faces = createFaceCarousel();
+  const bigGoal = h("div", "tm-biggoal");
 
   const sel = (): Timer | null => allTimers().find((t) => t.id === selectedId) ?? featuredTimer();
   const withSel = (f: (t: Timer) => void) => () => {
@@ -195,7 +170,7 @@ export function createTimerWidget(opts: { onShownChange(): void }): TimerWidget 
       selectedId = null;
     }))
   );
-  activeView.append(bigDial, ctrls, subRow);
+  activeView.append(faces.el, bigGoal, ctrls, subRow);
 
   // Finished view.
   const doneView = h("div", "tm-doneview");
@@ -308,6 +283,9 @@ export function createTimerWidget(opts: { onShownChange(): void }): TimerWidget 
       e.preventDefault();
       e.stopPropagation();
       isl.close();
+    } else if ((e.key === "[" || e.key === "]") && !(e.target instanceof HTMLInputElement)) {
+      e.preventDefault();
+      faces.step(e.key === "]" ? 1 : -1);
     } else if (e.key === " " && !(e.target instanceof HTMLInputElement)) {
       e.preventDefault();
       const t = sel();
@@ -406,13 +384,15 @@ export function createTimerWidget(opts: { onShownChange(): void }): TimerWidget 
     const t = sel();
     if (!t || t.state === "ringing" || t.state === "done") return;
     const left = remainingOf(t);
-    const p = progressOf(t);
-    bigArc.style.strokeDasharray = `${(BIG_C * (1 - p)).toFixed(2)} ${BIG_C.toFixed(2)}`;
-    tip.style.transform = `rotate(${(360 * (1 - p)).toFixed(2)}deg)`;
-    const text = formatClock(left);
-    if (bigTime.textContent !== text) bigTime.textContent = text;
-    bigDial.classList.toggle("final", t.state === "running" && left <= 15_000);
-    bigDial.classList.toggle("paused", t.state === "paused");
+    faces.paint({
+      leftMs: left,
+      progress: progressOf(t),
+      durationMs: t.durationMs,
+      running: t.state === "running",
+      paused: t.state === "paused",
+      final: t.state === "running" && left <= 15_000,
+      now: performance.now(),
+    });
   }
 
   let islandSig = "";

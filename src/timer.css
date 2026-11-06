@@ -410,76 +410,96 @@
   gap: 14px;
 }
 
-.tm-bigdial {
+/* ---------------------------------------------------------------- watch faces
+   timerFaces.ts. Every face paints in --tf-c: the accent, warm in the last
+   15 seconds. */
+
+.tf-carousel {
+  --tf-c: var(--accent);
   position: relative;
-  width: 168px;
-  height: 168px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-.tm-bigdial svg {
-  width: 100%;
+.tf-carousel.final {
+  --tf-c: var(--tm-hot);
+}
+
+.tf-stage {
+  position: relative;
+  width: calc(100% + 36px);
+  height: 176px;
+  margin: 0 -18px;
+  overflow: hidden;
+  touch-action: pan-y;
+  /* Faces fade out at the sides as they slide. */
+  mask-image: linear-gradient(90deg, transparent 0, #000 22px, #000 calc(100% - 22px), transparent);
+}
+
+.tf-rail {
+  display: flex;
   height: 100%;
+  will-change: transform;
+}
+
+.tf-face {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  transition: opacity 400ms ease, transform 520ms cubic-bezier(0.32, 0.72, 0, 1), filter 400ms ease;
+}
+
+.tf-face:not(.current) {
+  opacity: 0.35;
+  transform: scale(0.86);
+  filter: blur(1.5px);
+}
+
+/* While swiping, every face is half-lifted so the neighbours read clearly. */
+.tf-carousel.dragging .tf-face,
+.tf-carousel.dragging .tf-face:not(.current) {
+  opacity: 0.85;
+  transform: scale(0.94);
+  filter: none;
+}
+
+.tf-face svg {
+  width: 168px;
+  height: 168px;
   overflow: visible;
 }
 
-.tm-ticks line {
+.tf-carousel.paused .tf-face {
+  --tf-c: color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.tf-ticks line {
   stroke: color-mix(in srgb, var(--text) 16%, transparent);
   stroke-width: 1;
   stroke-linecap: round;
 }
 
-.tm-ticks line.maj {
-  stroke: color-mix(in srgb, var(--text) 32%, transparent);
+.tf-ticks line.maj {
+  stroke: color-mix(in srgb, var(--text) 34%, transparent);
   stroke-width: 1.5;
 }
 
-.tm-bigtrack {
-  fill: none;
-  stroke: color-mix(in srgb, var(--text) 9%, transparent);
-  stroke-width: 7;
-}
-
-.tm-bigarc {
-  fill: none;
-  stroke-width: 7;
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-  transform-origin: 70px 70px;
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 45%, transparent));
-  transition: opacity 300ms ease;
-}
-
-.tm-tip {
-  transform-origin: 70px 70px;
-}
-
-.tm-tip circle {
-  fill: #fff;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.45));
-}
-
-.tm-bigdial.paused .tm-bigarc {
-  opacity: 0.45;
-}
-
-.tm-bigdial.final .tm-bigarc {
-  stroke: var(--tm-hot);
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--tm-hot) 60%, transparent));
-}
-
-.tm-bigcenter {
+.tf-center {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 0 34px;
-  text-align: center;
+  gap: 1px;
+  pointer-events: none;
 }
 
-.tm-bigtime {
+.tf-time {
   font-family: var(--ui-display);
   font-size: 32px;
   font-weight: 600;
@@ -490,21 +510,636 @@
   transition: color 300ms ease;
 }
 
-.tm-bigdial.final .tm-bigtime {
-  color: var(--tm-hot);
+.tf-carousel.final .tf-time {
+  color: var(--tf-c);
 }
 
-.tm-bigdial.paused .tm-bigtime {
+.tf-carousel.paused :is(.tf-time, .tf-min-time, .tf-flip-row, .tf-orb-text) {
   animation: tm-breathe 1.8s ease-in-out infinite;
+}
+
+.tf-sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+/* 1. Ring */
+.tf-ring circle.tf-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text) 9%, transparent);
+  stroke-width: 7;
+}
+
+.tf-arc {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 70px 70px;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--tf-c) 45%, transparent));
+}
+
+.tf-tip {
+  transform-origin: 70px 70px;
+}
+
+.tf-tip circle {
+  fill: #fff;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.45));
+}
+
+/* 2. Minimal */
+.tf-minimal {
+  align-content: center;
+  gap: 12px;
+}
+
+.tf-min-time {
+  font-family: var(--ui-display);
+  font-size: 64px;
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  transition: color 300ms ease;
+}
+
+.tf-carousel.final .tf-min-time {
+  color: var(--tf-c);
+}
+
+.tf-min-bar {
+  width: 168px;
+  height: 2px;
+  border-radius: 1px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.tf-min-bar i {
+  display: block;
+  height: 100%;
+  background: var(--tf-c);
+  transform-origin: left;
+  box-shadow: 0 0 8px var(--tf-c);
+}
+
+.tf-min-sub,
+.tf-flip-sub {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* 3. Chrono */
+.tf-chrono-bezel {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text) 14%, transparent);
+  stroke-width: 2.5;
+}
+
+.tf-chrono-face {
+  fill: color-mix(in srgb, var(--text) 3.5%, transparent);
+}
+
+.tf-chrono-nums text {
+  font-family: var(--ui-font);
+  font-size: 8px;
+  font-weight: 600;
+  text-anchor: middle;
+  fill: color-mix(in srgb, var(--text) 55%, transparent);
+}
+
+.tf-subdial circle {
+  fill: color-mix(in srgb, var(--text) 4%, transparent);
+  stroke: color-mix(in srgb, var(--text) 14%, transparent);
+  stroke-width: 0.8;
+}
+
+.tf-subhand {
+  stroke: var(--text);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  transform-origin: 80px 106px;
+}
+
+.tf-chrono-read {
+  font-family: var(--ui-font);
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+  font-variant-numeric: tabular-nums;
+  fill: color-mix(in srgb, var(--text) 70%, transparent);
+}
+
+.tf-hand {
+  transform-origin: 80px 80px;
+  filter: drop-shadow(0 1.5px 2px rgba(0, 0, 0, 0.45));
+}
+
+.tf-hand line {
+  stroke: var(--tf-c);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.tf-hand circle {
+  fill: var(--tf-c);
+}
+
+.tf-chrono-cap {
+  fill: var(--bg-raised);
+}
+
+/* 4. Flip */
+.tf-flip {
+  align-content: center;
+  gap: 14px;
+}
+
+.tf-flip-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tf-card {
+  position: relative;
+  width: 44px;
+  height: 64px;
+  border-radius: 8px;
+  font-family: var(--ui-display);
+  font-size: 50px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  box-shadow: 0 6px 14px -6px rgba(0, 0, 0, 0.6), inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
+  /* Each card is its own little stage: a shared vanishing point would skew
+     the flaps of the cards away from the row's centre. */
+  perspective: 260px;
+}
+
+.tf-half {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  overflow: hidden;
+  backface-visibility: hidden;
+}
+
+.tf-half span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 64px;
+  line-height: 64px;
+  text-align: center;
+}
+
+.tf-top {
+  top: 0;
+  border-radius: 8px 8px 0 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 11%, var(--bg-raised)), color-mix(in srgb, var(--text) 7%, var(--bg-raised)));
+  transform-origin: 50% 100%;
+}
+
+.tf-top span {
+  top: 0;
+}
+
+.tf-bot {
+  bottom: 0;
+  border-radius: 0 0 8px 8px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 5%, var(--bg-raised)), color-mix(in srgb, var(--text) 8%, var(--bg-raised)));
+  transform-origin: 50% 0;
+  /* The seam between the halves. */
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.45);
+}
+
+.tf-bot span {
+  top: -32px;
+}
+
+.tf-leaf {
+  z-index: 2;
+  will-change: transform, filter;
+}
+
+.tf-carousel.final .tf-card {
+  color: var(--tf-c);
+}
+
+.tf-colon {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 1px;
+}
+
+.tf-colon i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 50%, transparent);
+}
+
+/* 5. Dots */
+.tf-dotring circle {
+  fill: color-mix(in srgb, var(--text) 12%, transparent);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: fill 400ms ease;
+}
+
+.tf-dotring circle.on {
+  fill: var(--tf-c);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tf-c) 70%, transparent));
+}
+
+.tf-dotring circle.edge {
+  animation: tf-edge 1s ease-in-out infinite;
+}
+
+@keyframes tf-edge {
+  50% {
+    transform: scale(1.6);
+    opacity: 0.6;
+  }
+}
+
+/* 6. Liquid */
+.tf-orb {
+  position: relative;
+  width: 152px;
+  height: 152px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--text) 5%, transparent), transparent 70%);
+  box-shadow:
+    inset 0 0 0 1.5px color-mix(in srgb, var(--text) 14%, transparent),
+    0 14px 34px -14px color-mix(in srgb, var(--tf-c) 60%, transparent);
+}
+
+.tf-orb svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tf-wave-back {
+  fill: color-mix(in srgb, var(--tf-c) 45%, transparent);
+}
+
+.tf-orb-text {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--ui-display);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.tf-orb-text-a {
+  color: var(--text);
+}
+
+.tf-orb-text-b {
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Glass: a soft highlight across the top of the orb. */
+.tf-orb-glass {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse 60% 32% at 38% 18%, rgba(255, 255, 255, 0.22), transparent 70%),
+    radial-gradient(circle at 50% 50%, transparent 62%, rgba(0, 0, 0, 0.18) 100%);
+  pointer-events: none;
+}
+
+/* 7. Diver: steel case, ceramic bezel (tinted from the accent), sunburst
+   dial, applied markers with metal surrounds, a magnified window. */
+.tf-diver svg {
+  width: 100%;
+  height: 100%;
+}
+
+.dv-watch {
+  position: relative;
+  width: 168px;
+  height: 168px;
+}
+
+.dv-case,
+.dv-bezel,
+.dv-rehaut,
+.dv-dial,
+.dv-glass {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.dv-case {
+  inset: 0;
+  background: conic-gradient(from 215deg, #f5f7f9, #98a0aa 12%, #e7eaee 26%, #7a828c 41%, #f2f4f6 55%, #a3aab3 70%, #eef1f4 84%, #f5f7f9);
+  box-shadow:
+    0 16px 32px -10px rgba(0, 0, 0, 0.75),
+    0 4px 10px -4px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* Fluted-edge crown at 3, between its guards. */
+.dv-crown {
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 10px;
+  height: 19px;
+  transform: translateY(-50%);
+  border-radius: 2px 5px 5px 2px;
+  background: repeating-linear-gradient(180deg, #e3e6ea 0 1.4px, #878e97 1.4px 2.8px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5), inset 0 0 0 0.5px rgba(0, 0, 0, 0.35);
+}
+
+.dv-bezel {
+  inset: 4px;
+  background:
+    radial-gradient(circle at 50% 28%, color-mix(in srgb, var(--accent) 30%, #1a2438), color-mix(in srgb, var(--accent) 16%, #04070d) 72%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.28),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+  transition: transform 800ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.dv-bezel-marks line {
+  stroke: #e8ecf1;
+  stroke-width: 0.9;
+  stroke-linecap: round;
+}
+
+.dv-bezel-marks line.maj {
+  stroke-width: 1.6;
+}
+
+.dv-bezel-marks text {
+  font-family: var(--ui-display);
+  font-size: 9.5px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+  fill: #e8ecf1;
+  letter-spacing: 0.02em;
+}
+
+.dv-tri {
+  fill: #e8ecf1;
+}
+
+.dv-pip {
+  fill: #e9f5e6;
+  filter: drop-shadow(0 0 2px rgba(200, 255, 210, 0.7));
+}
+
+/* The inner flange between bezel and dial. */
+.dv-rehaut {
+  inset: 22px;
+  background: linear-gradient(160deg, #3b4350, #12161d 55%, #2c333e);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+/* Sunburst: fine radial brushing over a slow light sweep. */
+.dv-dial {
+  inset: 26px;
+  background:
+    repeating-conic-gradient(from 0deg, rgba(255, 255, 255, 0.035) 0deg 0.8deg, rgba(0, 0, 0, 0.06) 0.8deg 1.6deg),
+    conic-gradient(
+      from 225deg,
+      color-mix(in srgb, var(--accent) 22%, #03050a),
+      color-mix(in srgb, var(--accent) 52%, #0b1428) 25%,
+      color-mix(in srgb, var(--accent) 20%, #03050a) 50%,
+      color-mix(in srgb, var(--accent) 48%, #0b1428) 75%,
+      color-mix(in srgb, var(--accent) 22%, #03050a)
+    );
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.65);
+}
+
+.dv-top {
+  position: absolute;
+  inset: 4px;
+  width: 160px !important;
+  height: 160px !important;
+  overflow: visible;
+}
+
+.dv-arc {
+  stroke: color-mix(in srgb, var(--tf-c) 80%, white);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tf-c) 85%, transparent));
+}
+
+.dv-track line {
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 0.6;
+}
+
+.dv-track line.maj {
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1;
+}
+
+.dv-indices {
+  fill: #f4f2ea;
+  stroke-width: 1.15;
+  filter: drop-shadow(0 1px 1.2px rgba(0, 0, 0, 0.55));
+}
+
+.dv-brand,
+.dv-model,
+.dv-left {
+  text-anchor: middle;
+  font-family: var(--ui-font);
+}
+
+.dv-brand {
+  font-size: 6.4px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  fill: #f2f4f7;
+}
+
+.dv-model {
+  font-size: 4.4px;
+  font-weight: 600;
+  letter-spacing: 0.26em;
+  fill: color-mix(in srgb, var(--tf-c) 75%, white);
+}
+
+.dv-left {
+  font-size: 4.6px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+  fill: rgba(255, 255, 255, 0.72);
+}
+
+.dv-window rect {
+  fill: #f6f6f2;
+  stroke-width: 0.9;
+}
+
+.dv-date {
+  font-family: var(--ui-display);
+  font-size: 8px;
+  font-weight: 700;
+  text-anchor: middle;
+  fill: #15171b;
+}
+
+/* The magnifier over the window: a domed lens with the number enlarged. */
+.dv-cyclops {
+  position: absolute;
+  left: 119px;
+  top: 75.5px;
+  width: 23px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background:
+    linear-gradient(170deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 45%),
+    #f7f7f3;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 0.6px rgba(0, 0, 0, 0.25),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.12);
+}
+
+.dv-cyclops span {
+  font-family: var(--ui-display);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #121418;
+  font-variant-numeric: tabular-nums;
+}
+
+.tf-diver.dv-seconds .dv-cyclops span,
+.tf-carousel.final .dv-cyclops span {
+  color: color-mix(in srgb, var(--tf-c) 75%, black);
+}
+
+.dv-hour,
+.dv-min,
+.dv-sec {
+  transform-origin: 80px 80px;
+  filter: drop-shadow(0 2px 1.6px rgba(0, 0, 0, 0.55));
+}
+
+.dv-hour path:first-child,
+.dv-min path:first-child {
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.4;
+}
+
+.dv-lume {
+  fill: #f1f6ea;
+}
+
+.dv-sec line {
+  stroke: var(--tf-c);
+  stroke-width: 0.9;
+  stroke-linecap: round;
+}
+
+.dv-sec circle {
+  fill: var(--tf-c);
+}
+
+.dv-sec circle.dv-lume {
+  fill: #f1f6ea;
+}
+
+.dv-cap {
+  fill: #d7dbe0;
+}
+
+/* Sapphire: a soft diagonal reflection over everything. */
+.dv-glass {
+  inset: 4px;
+  pointer-events: none;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0) 42%),
+    radial-gradient(circle at 50% 50%, transparent 66%, rgba(0, 0, 0, 0.22) 100%);
+}
+
+/* Name and page dots. */
+.tf-name {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-raised) 75%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translate(-50%, -4px) scale(0.92);
+  transition: opacity 220ms ease, transform 380ms cubic-bezier(0.34, 1.36, 0.5, 1);
+  pointer-events: none;
+}
+
+.tf-name.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.tf-pages {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.tf-pages i {
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  transition: width 380ms cubic-bezier(0.32, 0.72, 0, 1), background 300ms ease;
+}
+
+.tf-pages i.on {
+  width: 14px;
+  background: color-mix(in srgb, var(--text) 70%, transparent);
 }
 
 .tm-biggoal {
   max-width: 100%;
+  margin-top: -6px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 11.5px;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--text-dim);
+  text-align: center;
 }
 
 .tm-ctrls {
@@ -879,7 +1514,11 @@
   .am-hammer,
   .am-body,
   .tm-time,
-  .tm-bigtime {
+  .tf-time,
+  .tf-min-time,
+  .tf-flip-row,
+  .tf-orb-text,
+  .tf-dotring circle {
     animation: none !important;
   }
 }

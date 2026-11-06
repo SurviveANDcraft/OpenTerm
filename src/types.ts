@@ -650,6 +650,8 @@ export interface Settings {
   timerRingSound: boolean;
   /** Timers: dip other apps' audio for a few seconds as the alarm starts. */
   timerDuckAudio: boolean;
+  /** Timers: the watch face in the expanded view (see timerFaces.ts). */
+  timerFace: string;
 }
 
 export type TitlebarWidgetId = "session" | "path" | "media" | "timer" | "clock";
@@ -757,6 +759,7 @@ export const DEFAULT_SETTINGS: Settings = {
   timerTickSound: true,
   timerRingSound: true,
   timerDuckAudio: true,
+  timerFace: "ring",
 };
 
 export interface AppState {
