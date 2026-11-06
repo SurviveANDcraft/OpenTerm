@@ -637,6 +637,49 @@ export interface Settings {
    *  Stamped on finish *and* on skip, so the flow can't reappear uninvited.
    *  Settings → About & Data can clear it by replaying the welcome. */
   onboardedAt: number | null;
+  /** What the title bar shows, in order. Every known widget is listed once;
+   *  `on: false` keeps its place for when it's switched back on. */
+  titlebarWidgets: TitlebarWidget[];
+  /** Hide the Now playing widget while the music is paused. */
+  mediaOnlyWhilePlaying: boolean;
+  /** Timers: the finish animation in the title bar. */
+  timerAnimation: boolean;
+  /** Timers: a soft tick through the last 15 seconds. */
+  timerTickSound: boolean;
+  /** Timers: the alarm when one ends (stops by itself after 45 seconds). */
+  timerRingSound: boolean;
+  /** Timers: dip other apps' audio for a few seconds as the alarm starts. */
+  timerDuckAudio: boolean;
+}
+
+export type TitlebarWidgetId = "session" | "path" | "media" | "timer" | "clock";
+
+export interface TitlebarWidget {
+  id: TitlebarWidgetId;
+  on: boolean;
+}
+
+/** Every title-bar widget, in its default order. */
+export const TITLEBAR_WIDGETS: { id: TitlebarWidgetId; label: string; desc: string; on: boolean }[] = [
+  { id: "session", label: "Session", desc: "The active session's name and color.", on: true },
+  { id: "path", label: "Folder", desc: "Where the active session is working.", on: true },
+  { id: "media", label: "Now playing", desc: "Spotify, YouTube Music and anything else in Windows' media controls.", on: true },
+  { id: "timer", label: "Timer", desc: "Countdowns toward a goal, with an alarm when they end.", on: true },
+  { id: "clock", label: "Clock", desc: "The time, quietly.", on: false },
+];
+
+/** Known widgets only, each once, in the saved order — new ones join at the
+ *  end with their default state. */
+export function normalizeTitlebarWidgets(list: unknown): TitlebarWidget[] {
+  const out: TitlebarWidget[] = [];
+  if (Array.isArray(list)) {
+    for (const w of list) {
+      const def = TITLEBAR_WIDGETS.find((d) => d.id === w?.id);
+      if (def && !out.some((o) => o.id === def.id)) out.push({ id: def.id, on: w.on !== false });
+    }
+  }
+  for (const d of TITLEBAR_WIDGETS) if (!out.some((o) => o.id === d.id)) out.push({ id: d.id, on: d.on });
+  return out;
 }
 
 /** What the Agents panel assistant may do: read only, act with approval, or
@@ -644,7 +687,7 @@ export interface Settings {
 export type AssistantMode = "ask" | "act" | "auto";
 
 /** Areas of the app the assistant can be allowed into (Settings, AI). */
-export type AssistantPerm = "layout" | "input" | "tasks" | "sessions" | "ui" | "settings" | "usage";
+export type AssistantPerm = "layout" | "input" | "tasks" | "sessions" | "ui" | "media" | "settings" | "usage";
 
 export const SIDEBAR_WIDTH_MIN = 180;
 export const SIDEBAR_WIDTH_MAX = 420;
@@ -708,6 +751,12 @@ export const DEFAULT_SETTINGS: Settings = {
   keybinds: { ...DEFAULT_KEYBINDS },
   dictation: structuredClone(DEFAULT_DICTATION),
   onboardedAt: null,
+  titlebarWidgets: normalizeTitlebarWidgets([]),
+  mediaOnlyWhilePlaying: false,
+  timerAnimation: true,
+  timerTickSound: true,
+  timerRingSound: true,
+  timerDuckAudio: true,
 };
 
 export interface AppState {

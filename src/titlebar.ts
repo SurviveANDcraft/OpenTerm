@@ -10,6 +10,11 @@ import { store } from "./store";
 import { prettyChord } from "./keybinds";
 import sidebarIcon from "@phosphor-icons/core/regular/sidebar-simple.svg?raw";
 import sidebarOnIcon from "@phosphor-icons/core/fill/sidebar-simple-fill.svg?raw";
+import { createNowPlaying } from "./nowPlaying";
+import { createTimerWidget } from "./timerWidget";
+import { rearmTimers } from "./timers";
+import { setMediaWatching } from "./media";
+import type { TitlebarWidgetId } from "./types";
 
 /** Panel toggles in the title bar: the left sidebar on the left, the Agents
  *  panel on the right (the same glyph mirrored), so each sits over its side. */
@@ -54,12 +59,7 @@ export function createTitlebar(actions: TitlebarActions) {
   el.innerHTML = `
     <div class="tb-brand" data-tauri-drag-region><img src="${appIcon}" alt="" draggable="false" /></div>
     <button class="tb-tool tb-toggle-sidebar" data-act="sidebar" tabindex="-1"></button>
-    <div class="tb-title" data-tauri-drag-region>
-      <span class="tb-dot"></span>
-      <span class="tb-name"></span>
-      <span class="tb-sep"></span>
-      <span class="tb-path"></span>
-    </div>
+    <div class="tb-title" data-tauri-drag-region></div>
     <div class="tb-tools">
       <button class="tb-tool tb-toggle-agents" data-act="agents" tabindex="-1"><i class="tb-alert"></i></button>
     </div>
@@ -69,10 +69,91 @@ export function createTitlebar(actions: TitlebarActions) {
       <button class="tb-btn tb-close" data-act="close" title="Close" tabindex="-1">${CLOSE}</button>
     </div>`;
 
-  const dot = el.querySelector<HTMLElement>(".tb-dot")!;
-  const nameEl = el.querySelector<HTMLElement>(".tb-name")!;
-  const sepEl = el.querySelector<HTMLElement>(".tb-sep")!;
-  const pathEl = el.querySelector<HTMLElement>(".tb-path")!;
+  // ---- Centre widgets, in the order Settings → Appearance → Title bar says.
+  const titleEl = el.querySelector<HTMLElement>(".tb-title")!;
+  const sessionEl = document.createElement("span");
+  sessionEl.className = "tb-session";
+  sessionEl.innerHTML = `<span class="tb-dot"></span><span class="tb-name"></span>`;
+  const dot = sessionEl.querySelector<HTMLElement>(".tb-dot")!;
+  const nameEl = sessionEl.querySelector<HTMLElement>(".tb-name")!;
+  const pathEl = document.createElement("span");
+  pathEl.className = "tb-path";
+  const clockEl = document.createElement("span");
+  clockEl.className = "tb-clock";
+  const nowPlaying = createNowPlaying({ onShownChange: () => layout() });
+  const timer = createTimerWidget({ onShownChange: () => layout() });
+  const widgetEls: Record<TitlebarWidgetId, HTMLElement> = {
+    session: sessionEl,
+    path: pathEl,
+    media: nowPlaying.el,
+    timer: timer.el,
+    clock: clockEl,
+  };
+  const seps: HTMLElement[] = [];
+  let layoutSig = "";
+
+  function visible(id: TitlebarWidgetId): boolean {
+    if (id === "path") return !!pathEl.textContent;
+    if (id === "media") return !nowPlaying.el.hidden;
+    if (id === "timer") return !timer.el.hidden;
+    return true;
+  }
+
+  /** Places the switched-on widgets in order, with a hairline between two
+   *  pieces of text (the pills are their own capsules and need none). */
+  const isPill = (id: TitlebarWidgetId | null) => id === "media" || id === "timer";
+  function layout(): void {
+    const order = store.state.settings.titlebarWidgets.filter((w) => w.on).map((w) => w.id);
+    const shown = order.filter(visible);
+    // The media slot stays in the DOM while it is on, so its width can animate.
+    const placed = order.filter((id) => id === "media" || visible(id));
+    const sig = placed.join(",") + "|" + shown.join(",");
+    if (sig === layoutSig) return;
+    layoutSig = sig;
+    const nodes: HTMLElement[] = [];
+    let prev: TitlebarWidgetId | null = null;
+    let sepIdx = 0;
+    for (const id of placed) {
+      if (shown.includes(id)) {
+        if (prev && !isPill(prev) && !isPill(id)) {
+          const sep = (seps[sepIdx] ??= Object.assign(document.createElement("span"), { className: "tb-sep" }));
+          sepIdx++;
+          nodes.push(sep);
+        }
+        prev = id;
+      }
+      nodes.push(widgetEls[id]);
+    }
+    // Move only what changed: re-inserting the media slot would restart its
+    // width animation.
+    for (const child of Array.from(titleEl.children)) if (!nodes.includes(child as HTMLElement)) child.remove();
+    nodes.forEach((n, i) => {
+      if (titleEl.children[i] !== n) titleEl.insertBefore(n, titleEl.children[i] ?? null);
+    });
+  }
+
+  let clockTimer = 0;
+  function tickClock(): void {
+    const now = new Date();
+    clockEl.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    clockEl.title = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    clockTimer = window.setTimeout(tickClock, 60_000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
+  }
+
+  /** Re-reads the widget settings (on boot and after Settings → Save). */
+  function applyWidgets(): void {
+    const s = store.state.settings;
+    const on = (id: TitlebarWidgetId) => s.titlebarWidgets.some((w) => w.id === id && w.on);
+    void setMediaWatching(on("media"));
+    nowPlaying.setOnlyWhilePlaying(s.mediaOnlyWhilePlaying);
+    nowPlaying.setEnabled(on("media"));
+    timer.setEnabled(on("timer"));
+    rearmTimers();
+    clearTimeout(clockTimer);
+    if (on("clock")) tickClock();
+    layoutSig = "";
+    layout();
+  }
   const maxBtn = el.querySelector<HTMLElement>('[data-act="max"]')!;
 
   const sidebarBtn = el.querySelector<HTMLElement>(".tb-toggle-sidebar")!;
@@ -135,16 +216,13 @@ export function createTitlebar(actions: TitlebarActions) {
       dot.style.background = s.color;
       dot.classList.remove("hidden");
       nameEl.textContent = s.name;
-      const p = s.cwd ? prettyPath(s.cwd) : "";
-      pathEl.textContent = p;
-      sepEl.classList.toggle("hidden", !p);
-      pathEl.classList.toggle("hidden", !p);
+      pathEl.textContent = s.cwd ? prettyPath(s.cwd) : "";
     } else {
       dot.classList.add("hidden");
       nameEl.textContent = "OpenTerm";
-      sepEl.classList.add("hidden");
-      pathEl.classList.add("hidden");
+      pathEl.textContent = "";
     }
+    layout();
   }
 
   if (win) {
@@ -153,11 +231,15 @@ export function createTitlebar(actions: TitlebarActions) {
     void win.onFocusChanged(({ payload }) => el.classList.toggle("blurred", !payload));
   }
   refresh();
+  applyWidgets();
   syncToggles();
 
   return {
     el,
     refresh,
+    applyWidgets,
+    /** The expanded Now playing view is open (it overlaps the panes). */
+    mediaOpen: () => nowPlaying.isOpen() || timer.isOpen(),
     /** Amber dot on the Agents toggle while any agent is waiting on the user. */
     setAgentsAlert(on: boolean): void {
       agentsAlert.classList.toggle("on", on);

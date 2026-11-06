@@ -98,6 +98,11 @@ const TOOL_ICON: Record<string, IconName> = {
   switch_session: "crosshair",
   toggle_panel: "cornersOut",
   set_setting: "pencil",
+  now_playing: "info",
+  control_media: "play",
+  list_timers: "search",
+  set_timer: "bell",
+  update_timer: "pencil",
 };
 
 /** A step label, with `code` spans rendered as code. */

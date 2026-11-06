@@ -135,6 +135,7 @@ import {
 } from "./filePanes";
 import { createSearchModal } from "./searchModal";
 import { createTitlebar } from "./titlebar";
+import { initTimers } from "./timers";
 import { quotePathForShell } from "./explorer";
 import { initExternalFileDrop } from "./externalDrop";
 import {
@@ -2226,6 +2227,7 @@ function applySettingsLive(): void {
   panes.forEach((p) => p.applySettings(s));
   syncAllExternal();
   updateChrome();
+  titlebar.applyWidgets();
   agentsPanel.refreshSettings();
   publishFocusedAgent(); // the paste shortcut may have changed
   store.save();
@@ -3623,7 +3625,8 @@ function anyOverlayOpen(): boolean {
     gitMapPanel.isOpen() ||
     inboxPanel.isOpen() ||
     tasksPanel.isOpen() ||
-    sidebar.isAddMenuOpen()
+    sidebar.isAddMenuOpen() ||
+    titlebar.mediaOpen()
   );
 }
 
@@ -3794,6 +3797,8 @@ async function boot(): Promise<void> {
   // that item should get a name like every other.
   startInboxAi();
   await store.load();
+  // Timers from the last run: re-armed, or filed as finished while closed.
+  void initTimers();
   scanTaskDueDates();
   window.setInterval(scanTaskDueDates, 5 * 60 * 1000);
   window.setInterval(() => void pollLiveHarnesses(), LIVE_HARNESS_POLL_MS);

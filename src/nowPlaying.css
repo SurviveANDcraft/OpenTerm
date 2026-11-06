@@ -1,0 +1,1197 @@
+/* ================= Now playing (nowPlaying.ts) =================
+   A pill in the title bar that grows into an "island" below it. Painted from
+   the palette like the rest of the chrome, plus --np-tint: the cover art's
+   own colour, picked in JS, used for glows, the level bars and the timeline. */
+
+.np-slot,
+.np-island {
+  --np-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --np-pop: cubic-bezier(0.34, 1.36, 0.5, 1);
+  --np-tint: var(--accent);
+}
+
+/* The slot opens its own width (0fr → 1fr), so the centred title slides
+   aside smoothly instead of jumping when music starts. */
+.np-slot {
+  display: grid;
+  grid-template-columns: 0fr;
+  flex: none;
+  pointer-events: auto;
+  opacity: 0;
+  transform: scale(0.82);
+  filter: blur(4px);
+  transition:
+    grid-template-columns 560ms var(--np-spring),
+    opacity 300ms ease,
+    transform 560ms var(--np-pop),
+    filter 300ms ease;
+}
+
+.np-slot[hidden] {
+  display: none;
+}
+
+.np-slot.shown {
+  grid-template-columns: 1fr;
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+/* ---------------------------------------------------------------- pill */
+
+.np-pill {
+  position: relative;
+  min-width: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px 0 3px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: default;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+  transition:
+    background 220ms ease,
+    box-shadow 420ms var(--np-spring),
+    transform 300ms var(--np-pop);
+}
+
+.np-pill:hover {
+  background: color-mix(in srgb, var(--text) 9.5%, transparent);
+}
+
+.np-pill:active:not(:has(.np-q:active)) {
+  transform: scale(0.97);
+}
+
+.np-pill.playing {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--np-tint) 24%, transparent),
+    0 0 16px -7px color-mix(in srgb, var(--np-tint) 75%, transparent);
+}
+
+.np-pill.open {
+  background: color-mix(in srgb, var(--np-tint) 16%, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.np-art {
+  position: relative;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: linear-gradient(140deg,
+      color-mix(in srgb, var(--np-tint) 55%, var(--bg-raised)),
+      color-mix(in srgb, var(--np-tint) 18%, var(--bg-raised)));
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--text) 14%, transparent), 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 500ms var(--np-pop);
+}
+
+.np-pill:not(.playing) .np-art {
+  transform: scale(0.88);
+}
+
+.np-art img,
+.np-cover img,
+.np-ambient img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+
+.np-art-ph,
+.np-cover-ph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  transition: opacity 300ms ease;
+}
+
+.has-art > .np-art-ph,
+.has-art > .np-cover-ph {
+  opacity: 0;
+}
+
+/* Lines stack in one cell so a track change can cross them over. */
+.np-text {
+  display: grid;
+  min-width: 0;
+  max-width: 230px;
+  height: 16px;
+  align-items: center;
+}
+
+.np-line,
+.np-peek {
+  grid-area: 1 / 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 16px;
+  transition: opacity 240ms ease, transform 380ms var(--np-spring), filter 240ms ease;
+}
+
+.np-l-title {
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.005em;
+}
+
+.np-l-artist {
+  margin-left: 6px;
+  color: var(--text-faint);
+}
+
+.np-pill:not(.playing) .np-l-title {
+  color: var(--text-dim);
+}
+
+/* Volume readout while scrolling over the pill. */
+.np-peek {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  opacity: 0;
+  transform: translateY(7px);
+  filter: blur(2px);
+  color: var(--text-dim);
+}
+
+.np-peek-icon {
+  display: grid;
+  flex: none;
+}
+
+.np-peek-bar {
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+  height: 4px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.np-peek-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left;
+  background: var(--text);
+  transition: transform 160ms var(--np-spring);
+}
+
+.np-pill.peek .np-peek {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+.np-pill.peek .np-line:not(.leaving) {
+  opacity: 0;
+  transform: translateY(-7px);
+  filter: blur(2px);
+}
+
+/* Transport tucked inside the pill, slid out on hover. */
+.np-quick {
+  display: grid;
+  grid-template-columns: 0fr;
+  margin-left: -8px;
+  transition: grid-template-columns 460ms var(--np-spring), margin 460ms var(--np-spring);
+}
+
+.np-quick-in {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 200ms ease, transform 420ms var(--np-pop);
+}
+
+.np-pill:hover .np-quick,
+.np-pill.open .np-quick {
+  grid-template-columns: 1fr;
+  margin-left: 0;
+}
+
+.np-pill:hover .np-quick-in,
+.np-pill.open .np-quick-in {
+  opacity: 1;
+  transform: none;
+  transition-delay: 60ms;
+}
+
+.np-q {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-dim);
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.np-q:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.np-q-play {
+  color: var(--text);
+}
+
+.np-q:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.np-q:focus-visible {
+  box-shadow: none;
+}
+
+.np-glyph {
+  display: grid;
+  place-items: center;
+}
+
+/* Level bars, driven per frame from the app's real output peak. */
+.np-eq {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.np-eq i {
+  width: 2.5px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--np-tint);
+  transform: scaleY(0.22);
+  transform-origin: center;
+  will-change: transform;
+}
+
+.np-pill:not(.playing) .np-eq i {
+  background: var(--text-faint);
+  transition: transform 500ms var(--np-spring), background 300ms ease;
+}
+
+/* Progress, as a hairline along the bottom of the pill. */
+.np-prog {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 0;
+  height: 1.5px;
+  border-radius: 1px;
+  background: var(--np-tint);
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: opacity 300ms ease;
+  pointer-events: none;
+}
+
+.np-pill.playing .np-prog {
+  opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------- island */
+
+.np-island {
+  position: fixed;
+  z-index: 1200;
+  width: 344px;
+  border-radius: 22px;
+  overflow: hidden;
+  color: var(--text);
+  outline: none;
+  background: color-mix(in srgb, var(--np-tint) 6%, var(--bg-raised));
+  /* Only inner light here: anything outside the box would be cut by the
+     morph's clip-path. The outer shadow and glow live on .island-glow. */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 9%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent);
+  will-change: transform, clip-path;
+  user-select: none;
+}
+
+/* The island's shadow and coloured glow, on a layer of its own behind it that
+   islandMorph.ts keeps on the island's current outline every frame — so the
+   glow grows and fades with the panel instead of popping in after it. */
+.island-glow {
+  --np-tint: var(--accent);
+  position: fixed;
+  z-index: 1199;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow:
+    0 28px 70px -18px rgba(0, 0, 0, 0.6),
+    0 10px 24px -10px rgba(0, 0, 0, 0.4),
+    0 24px 80px -30px color-mix(in srgb, var(--np-tint) 55%, transparent);
+  will-change: opacity, left, top, width, height;
+}
+
+.island-glow[hidden] {
+  display: none;
+}
+
+.np-island[hidden] {
+  display: none;
+}
+
+.np-island.closing {
+  pointer-events: none;
+}
+
+/* The cover, blown up and blurred into the background, like Music's. */
+.np-ambient {
+  position: absolute;
+  inset: -50px;
+  pointer-events: none;
+}
+
+.np-ambient img {
+  filter: blur(48px) saturate(1.7);
+  opacity: 0.5;
+  transform: scale(1.15);
+  animation: np-drift 26s ease-in-out infinite alternate;
+  animation-play-state: paused;
+}
+
+.np-island.playing .np-ambient img {
+  animation-play-state: running;
+}
+
+.np-ambient::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg,
+      color-mix(in srgb, var(--bg-raised) 50%, transparent),
+      color-mix(in srgb, var(--bg-raised) 80%, transparent) 70%);
+}
+
+@keyframes np-drift {
+  from {
+    transform: scale(1.15) rotate(0deg) translate(0, 0);
+  }
+
+  to {
+    transform: scale(1.35) rotate(14deg) translate(12px, -10px);
+  }
+}
+
+.np-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 14px;
+}
+
+.np-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.np-cover {
+  position: relative;
+  flex: none;
+  width: 68px;
+  height: 68px;
+  border-radius: 13px;
+  overflow: hidden;
+  background: linear-gradient(140deg,
+      color-mix(in srgb, var(--np-tint) 50%, var(--bg-raised)),
+      color-mix(in srgb, var(--np-tint) 14%, var(--bg-raised)));
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--text) 14%, transparent),
+    0 10px 24px -8px rgba(0, 0, 0, 0.6);
+  transform: scale(0.9);
+  transition: transform 700ms var(--np-pop), box-shadow 500ms ease;
+}
+
+/* Paused, the cover settles back; playing, it lifts — Music's tell. */
+.np-island.playing .np-cover {
+  transform: none;
+  box-shadow:
+    0 0 0 0.5px color-mix(in srgb, var(--text) 14%, transparent),
+    0 14px 30px -8px rgba(0, 0, 0, 0.65),
+    0 10px 30px -12px color-mix(in srgb, var(--np-tint) 70%, transparent);
+}
+
+.np-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.np-title {
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--ui-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.np-title-text {
+  display: inline-block;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: color 160ms ease, text-decoration-color 200ms ease;
+}
+
+/* The title and the cover are links to the source. */
+.np-title,
+.np-cover {
+  cursor: pointer;
+}
+
+.np-title:hover .np-title-text {
+  color: color-mix(in srgb, var(--np-tint) 35%, var(--text));
+  text-decoration-color: color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.np-cover:hover {
+  transform: scale(1.04) !important;
+}
+
+.np-cover:active,
+.np-title:active .np-title-text {
+  transform: scale(0.97) !important;
+}
+
+.np-title.marquee {
+  mask-image: linear-gradient(90deg, transparent 0, #000 6px, #000 calc(100% - 18px), transparent);
+}
+
+.np-title.marquee .np-title-text {
+  animation: np-marquee var(--np-dur, 8s) ease-in-out infinite alternate;
+}
+
+@keyframes np-marquee {
+  0%,
+  14% {
+    transform: translateX(0);
+  }
+
+  86%,
+  100% {
+    transform: translateX(var(--np-shift, 0));
+  }
+}
+
+.np-artist {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.np-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 99px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+/* ---------------------------------------------------------------- sliders */
+
+.np-slider {
+  position: relative;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  outline: none;
+  touch-action: none;
+  cursor: default;
+  transition: transform 300ms var(--np-pop);
+}
+
+.np-slider-track {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+  transition: height 300ms var(--np-pop), background 200ms ease;
+}
+
+.np-slider:hover .np-slider-track,
+.np-slider.dragging .np-slider-track {
+  height: 8px;
+  background: color-mix(in srgb, var(--text) 19%, transparent);
+}
+
+.np-slider.dragging {
+  transform: scaleX(1.025);
+}
+
+.np-slider-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--text) 78%, transparent);
+  transition: background 200ms ease;
+}
+
+.np-slider:hover .np-slider-fill,
+.np-slider.dragging .np-slider-fill {
+  background: var(--text);
+}
+
+.np-scrub .np-slider-fill {
+  background: color-mix(in srgb, var(--np-tint) 85%, var(--text));
+}
+
+.np-scrub:hover .np-slider-fill,
+.np-scrub.dragging .np-slider-fill {
+  background: color-mix(in srgb, var(--np-tint) 70%, var(--text));
+}
+
+/* A knob that rises out of the fill under the pointer. */
+.np-slider-knob {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--r, 0) * 100%);
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.18),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: scale(0.3);
+  transition: opacity 180ms ease, transform 320ms var(--np-pop);
+  pointer-events: none;
+}
+
+.np-slider:hover .np-slider-knob {
+  opacity: 1;
+  transform: none;
+}
+
+.np-slider.dragging .np-slider-knob {
+  opacity: 1;
+  transform: scale(1.18);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.18),
+    0 3px 10px rgba(0, 0, 0, 0.4),
+    0 0 0 5px color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.np-slider:focus-visible .np-slider-track {
+  box-shadow: var(--focus-ring);
+}
+
+.np-slider.disabled {
+  pointer-events: none;
+}
+
+.np-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.np-timeline.live {
+  display: none;
+}
+
+.np-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  transition: color 200ms ease;
+}
+
+.np-timeline:has(.np-slider.dragging) .np-times {
+  color: var(--text-dim);
+}
+
+/* ---------------------------------------------------------------- transport */
+
+.np-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-top: -2px;
+}
+
+.np-transport.sides {
+  justify-content: space-between;
+  gap: 0;
+  padding: 0 6px;
+}
+
+.np-t {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text);
+  transition: background 160ms ease, color 160ms ease, opacity 200ms ease;
+}
+
+.np-t:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.np-t:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.np-t:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.np-t[hidden] {
+  display: none;
+}
+
+.np-t-play {
+  width: 52px;
+  height: 52px;
+  color: var(--bg-raised);
+  background: var(--text);
+  box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.5);
+  transition: background 160ms ease, box-shadow 500ms ease, transform 300ms var(--np-pop);
+}
+
+.np-t-play:hover {
+  background: color-mix(in srgb, var(--text) 90%, var(--np-tint));
+  transform: scale(1.04);
+}
+
+.np-island.playing .np-t-play {
+  box-shadow:
+    0 6px 16px -6px rgba(0, 0, 0, 0.5),
+    0 8px 26px -8px color-mix(in srgb, var(--np-tint) 80%, transparent);
+}
+
+.np-t-side {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  color: var(--text-faint);
+}
+
+.np-t-side.on {
+  color: color-mix(in srgb, var(--np-tint) 80%, var(--text));
+}
+
+.np-t-side::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  transform: scale(0);
+  transition: opacity 200ms ease, transform 400ms var(--np-pop);
+}
+
+.np-t-side.on::after {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------- volume */
+
+.np-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.np-volume[hidden] {
+  display: none;
+}
+
+.np-v-icon {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  margin-left: -5px;
+  color: var(--text-dim);
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.np-v-icon:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.np-vol {
+  flex: 1;
+}
+
+.np-v-scope {
+  flex: none;
+  max-width: 76px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* ---------------------------------------------------------------- sources */
+
+.np-sources {
+  display: flex;
+  gap: 6px;
+  margin: 0 -18px -2px;
+  padding: 12px 18px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.np-sources[hidden] {
+  display: none;
+}
+
+.np-chip {
+  flex: none;
+  max-width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 8px;
+  border-radius: 11px;
+  text-align: left;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  transition: background 160ms ease, color 160ms ease, box-shadow 300ms ease;
+}
+
+.np-chip:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.np-chip.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--np-tint) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--np-tint) 32%, transparent);
+}
+
+.np-chip svg {
+  flex: none;
+}
+
+.np-chip-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.np-chip-text b {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.np-chip-text span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.np-chip-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--status-run);
+  opacity: 0;
+  transform: scale(0.3);
+  transition: opacity 200ms ease, transform 400ms var(--np-pop);
+}
+
+.np-chip.playing .np-chip-dot {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------- title bar */
+
+.tb-clock {
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.tb-session {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 220px;
+  /* The path gives way first; the session name is what identifies the window. */
+  flex: 0 0 auto;
+}
+
+/* ---------------------------------------------------------------- settings */
+
+.tbw-preview {
+  position: relative;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--text) 4.5%, var(--bg-sidebar));
+  box-shadow: inset 0 0 0 1px var(--border), 0 3px 8px -4px rgba(0, 0, 0, 0.4);
+}
+
+.tbw-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 60%, transparent), transparent 52%);
+}
+
+.tbw-preview .tbw-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.tbw-pv {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  animation: tbw-in 420ms cubic-bezier(0.34, 1.36, 0.5, 1);
+}
+
+.tbw-pv-sep {
+  width: 1px;
+  height: 11px;
+  background: var(--hairline);
+}
+
+.tbw-pv-media {
+  height: 24px;
+  padding: 0 9px 0 3px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.tbw-pv-media .tbw-pv-art {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 30%, var(--bg-raised)));
+}
+
+.tbw-pv-media b {
+  font-weight: 600;
+}
+
+.tbw-pv-media span {
+  color: var(--text-faint);
+}
+
+.tbw-pv-eq {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.tbw-pv-eq i {
+  width: 2.5px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: tbw-eq 1.1s ease-in-out infinite alternate;
+}
+
+.tbw-pv-eq i:nth-child(2) {
+  animation-delay: -0.4s;
+}
+
+.tbw-pv-eq i:nth-child(3) {
+  animation-delay: -0.75s;
+}
+
+.tbw-pv-eq i:nth-child(4) {
+  animation-delay: -0.2s;
+}
+
+@keyframes tbw-eq {
+  from {
+    transform: scaleY(0.25);
+  }
+
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes tbw-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+    filter: blur(3px);
+  }
+}
+
+.tbw-pv-name {
+  font-weight: 600;
+}
+
+.tbw-pv-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.tbw-pv-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.tbw-pv-clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.tbw-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tbw-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px 9px 6px;
+  border-radius: 10px;
+  background: var(--elev-1);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  transition: box-shadow 200ms ease, background 200ms ease, opacity 200ms ease;
+}
+
+.tbw-row.off .tbw-row-text {
+  opacity: 0.55;
+}
+
+.tbw-row.lifted {
+  z-index: 2;
+  background: var(--elev-3);
+  box-shadow: inset 0 0 0 1px var(--hover-line), var(--shadow-3);
+  transition: box-shadow 200ms ease, background 200ms ease;
+}
+
+.tbw-handle {
+  flex: none;
+  width: 22px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: grab;
+  touch-action: none;
+}
+
+.tbw-handle:hover {
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.tbw-row.lifted .tbw-handle {
+  cursor: grabbing;
+  color: var(--text);
+}
+
+.tbw-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.tbw-row-text {
+  flex: 1;
+  min-width: 0;
+  transition: opacity 200ms ease;
+}
+
+.tbw-row-text b {
+  display: block;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.tbw-row-text span {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* ---------------------------------------------------------------- loading
+   Between tracks: the old track stays, dimmed, with a light sweeping across
+   it until the new one arrives and slides in. */
+
+.np-pill.loading .np-text,
+.np-island.loading .np-meta {
+  mask-image: linear-gradient(100deg, rgba(0, 0, 0, 0.38) 30%, #000 50%, rgba(0, 0, 0, 0.38) 70%);
+  mask-size: 250% 100%;
+  animation: np-shimmer 1.3s linear infinite;
+}
+
+@keyframes np-shimmer {
+  from {
+    mask-position: 100% 0;
+  }
+
+  to {
+    mask-position: -150% 0;
+  }
+}
+
+.np-art img,
+.np-cover img {
+  transition: opacity 400ms ease, filter 400ms ease;
+}
+
+.np-pill.loading .np-art img,
+.np-island.loading .np-cover img {
+  opacity: 0.45;
+  filter: saturate(0.5) blur(1px);
+}
+
+.np-pill.loading .np-eq i {
+  background: color-mix(in srgb, var(--np-tint) 60%, var(--text-faint));
+}
+
+.np-island.loading .np-cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, color-mix(in srgb, var(--text) 18%, transparent) 50%, transparent 70%);
+  background-size: 250% 100%;
+  animation: np-sweep 1.3s linear infinite;
+}
+
+@keyframes np-sweep {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -150% 0;
+  }
+}
+
+.np-island.loading .np-timeline {
+  opacity: 0.4;
+  transition: opacity 300ms ease;
+}
+
+.np-timeline {
+  transition: opacity 300ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .np-pill.loading .np-text,
+  .np-island.loading .np-meta,
+  .np-island.loading .np-cover::after {
+    animation: none;
+  }
+
+  .np-slot,
+  .np-pill,
+  .np-quick,
+  .np-quick-in,
+  .np-line,
+  .np-peek,
+  .np-cover,
+  .np-slider,
+  .np-slider-track {
+    transition: none;
+  }
+
+  .np-ambient img,
+  .np-title.marquee .np-title-text,
+  .tbw-pv,
+  .tbw-pv-eq i {
+    animation: none;
+  }
+}

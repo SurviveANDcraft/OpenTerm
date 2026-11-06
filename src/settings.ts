@@ -10,7 +10,16 @@ import {
   Session,
   Settings,
   SOUND_PRESETS,
+  TITLEBAR_WIDGETS,
+  type TitlebarWidgetId,
 } from "./types";
+import { activeSource } from "./media";
+import handleSvg from "@phosphor-icons/core/bold/dots-six-vertical-bold.svg?raw";
+import wSessionSvg from "@phosphor-icons/core/fill/terminal-window-fill.svg?raw";
+import wPathSvg from "@phosphor-icons/core/fill/folder-simple-fill.svg?raw";
+import wMediaSvg from "@phosphor-icons/core/fill/music-notes-simple-fill.svg?raw";
+import wClockSvg from "@phosphor-icons/core/fill/clock-fill.svg?raw";
+import wTimerSvg from "@phosphor-icons/core/fill/timer-fill.svg?raw";
 import { collectLeaves } from "./tree";
 import { cancelRecording, chordFromEvent, prettyChord, recorder } from "./keybinds";
 import { Theme, THEMES } from "./themes";
@@ -1192,6 +1201,153 @@ export function createSettingsView(handlers: SettingsHandlers) {
   // consts above must already exist.
   const backupsSection = buildBackupsSection();
 
+  // ---------------------------------------------------------------- title bar
+  const WIDGET_ICONS: Record<TitlebarWidgetId, string> = {
+    session: wSessionSvg,
+    path: wPathSvg,
+    media: wMediaSvg,
+    timer: wTimerSvg,
+    clock: wClockSvg,
+  };
+  const sized = (raw: string, n: number) => raw.replace("<svg ", `<svg width="${n}" height="${n}" aria-hidden="true" `);
+  const esc = (t: string) =>
+    t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+  /** A live preview of the title bar over a list of its widgets: switch each
+   *  on or off, and drag the handles to reorder them. */
+  function titlebarEditor(s: Settings): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "tbw";
+    wrap.dataset.search = "title bar widgets now playing music spotify youtube clock session folder path";
+    const preview = document.createElement("div");
+    preview.className = "tbw-preview";
+    preview.setAttribute("aria-hidden", "true");
+    const list = document.createElement("div");
+    list.className = "tbw-list";
+    wrap.append(preview, list);
+
+    const paintPreview = (): void => {
+      const session = store.state.sessions.find((x) => x.id === store.state.activeSessionId);
+      const song = activeSource();
+      const parts: string[] = [];
+      let prev: TitlebarWidgetId | null = null;
+      for (const w of s.titlebarWidgets) {
+        if (!w.on) continue;
+        const pillish = (id: TitlebarWidgetId | null) => id === "media" || id === "timer";
+        if (prev && !pillish(prev) && !pillish(w.id)) parts.push(`<span class="tbw-pv-sep"></span>`);
+        prev = w.id;
+        if (w.id === "session")
+          parts.push(
+            `<span class="tbw-pv"><span class="tbw-pv-dot" style="background:${session?.color ?? "var(--accent)"}"></span><span class="tbw-pv-name">${esc(session?.name ?? "OpenTerm")}</span></span>`
+          );
+        else if (w.id === "path") parts.push(`<span class="tbw-pv tbw-pv-path">~\\dev\\project</span>`);
+        else if (w.id === "timer")
+          parts.push(
+            `<span class="tbw-pv tbw-pv-media tbw-pv-timer"><svg viewBox="0 0 20 20" width="18" height="18"><circle cx="10" cy="10" r="7.4" fill="none" stroke="color-mix(in srgb, var(--text) 14%, transparent)" stroke-width="2.2"/><circle cx="10" cy="10" r="7.4" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="31 47" transform="rotate(-90 10 10)"/></svg><b>18:42</b><span>Deep work</span></span>`
+          );
+        else if (w.id === "clock")
+          parts.push(
+            `<span class="tbw-pv tbw-pv-clock">${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>`
+          );
+        else
+          parts.push(
+            `<span class="tbw-pv tbw-pv-media"><span class="tbw-pv-art"></span><b>${esc(song?.title || "Song title")}</b><span>${esc(song?.artist || "Artist")}</span><span class="tbw-pv-eq"><i></i><i></i><i></i><i></i></span></span>`
+          );
+      }
+      preview.innerHTML = parts.length ? parts.join("") : `<span class="tbw-empty">Nothing, just the window controls</span>`;
+    };
+
+    const rows = (): HTMLElement[] => Array.from(list.children) as HTMLElement[];
+
+    for (const w of s.titlebarWidgets) {
+      const def = TITLEBAR_WIDGETS.find((d) => d.id === w.id)!;
+      const row = document.createElement("div");
+      row.className = "tbw-row";
+      row.classList.toggle("off", !w.on);
+      const handle = document.createElement("span");
+      handle.className = "tbw-handle";
+      handle.title = "Drag to reorder";
+      handle.innerHTML = sized(handleSvg, 14);
+      const icon = document.createElement("span");
+      icon.className = "tbw-icon";
+      icon.innerHTML = sized(WIDGET_ICONS[w.id], 15);
+      const text = document.createElement("div");
+      text.className = "tbw-row-text";
+      text.innerHTML = `<b>${def.label}</b><span>${def.desc}</span>`;
+      const sw = toggle(w.on, (v) => {
+        w.on = v;
+        row.classList.toggle("off", !v);
+        paintPreview();
+        markDirty();
+      });
+      sw.setAttribute("aria-label", `Show ${def.label}`);
+      row.append(handle, icon, text, sw);
+      list.appendChild(row);
+
+      handle.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        handle.setPointerCapture(e.pointerId);
+        const all = rows();
+        const from = all.indexOf(row);
+        const rects = all.map((r) => r.getBoundingClientRect());
+        const pitch = rects.length > 1 ? rects[1].top - rects[0].top : rects[0].height + 6;
+        const startY = e.clientY;
+        let to = from;
+        row.classList.add("lifted");
+        for (const r of all) if (r !== row) r.style.transition = "transform 260ms cubic-bezier(0.32, 0.72, 0, 1)";
+
+        const move = (ev: PointerEvent): void => {
+          const minDy = rects[0].top - rects[from].top;
+          const maxDy = rects[rects.length - 1].top - rects[from].top;
+          const dy = Math.max(minDy - 8, Math.min(maxDy + 8, ev.clientY - startY));
+          row.style.transform = `translateY(${dy}px) scale(1.015)`;
+          to = Math.max(0, Math.min(all.length - 1, from + Math.round(dy / pitch)));
+          all.forEach((r, i) => {
+            if (r === row) return;
+            let shift = 0;
+            if (from < to && i > from && i <= to) shift = -pitch;
+            else if (from > to && i >= to && i < from) shift = pitch;
+            r.style.transform = shift ? `translateY(${shift}px)` : "";
+          });
+        };
+        const up = (): void => {
+          handle.removeEventListener("pointermove", move);
+          handle.removeEventListener("pointerup", up);
+          handle.removeEventListener("pointercancel", up);
+          const dropped = row.getBoundingClientRect().top;
+          for (const r of all) {
+            r.style.transition = "none";
+            r.style.transform = "";
+          }
+          row.classList.remove("lifted");
+          if (to !== from) {
+            const [moved] = s.titlebarWidgets.splice(from, 1);
+            s.titlebarWidgets.splice(to, 0, moved);
+            const order = all.slice();
+            order.splice(from, 1);
+            order.splice(to, 0, row);
+            list.append(...order);
+            paintPreview();
+            markDirty();
+          }
+          // Settle from where it was let go into its slot.
+          const settled = row.getBoundingClientRect().top;
+          row.animate([{ transform: `translateY(${dropped - settled}px) scale(1.015)` }, { transform: "none" }], {
+            duration: 380,
+            easing: "cubic-bezier(0.34, 1.36, 0.5, 1)",
+          });
+          requestAnimationFrame(() => all.forEach((r) => (r.style.transition = "")));
+        };
+        handle.addEventListener("pointermove", move);
+        handle.addEventListener("pointerup", up);
+        handle.addEventListener("pointercancel", up);
+      });
+    }
+    paintPreview();
+    return wrap;
+  }
+
   // ---------------------------------------------------------------- render
   function render(): void {
     const s = draft;
@@ -1225,6 +1381,28 @@ export function createSettingsView(handlers: SettingsHandlers) {
     themeGrid.dataset.search = ["theme color dark light", ...THEMES.map((t) => t.name)].join(" ").toLowerCase();
     cats.appearance.push(
       section("Theme", "Colors for the whole app.", [themeGrid], { keywords: "theme colors palette dark light" })
+    );
+
+    cats.appearance.push(
+      section(
+        "Title bar",
+        "What sits in the middle of the window's title bar. Drag to reorder.",
+        [
+          titlebarEditor(s),
+          field(
+            "Hide Now playing while paused",
+            toggle(s.mediaOnlyWhilePlaying, (v) => {
+              s.mediaOnlyWhilePlaying = v;
+              markDirty();
+            }),
+            {
+              desc: "Now playing follows Spotify, YouTube Music in your browser, and anything else in Windows' media controls. Click it for the full player; scroll over it for volume.",
+              keywords: "music spotify youtube media paused",
+            }
+          ),
+        ],
+        { keywords: "title bar titlebar widgets now playing music spotify youtube media player clock session folder path" }
+      )
     );
 
     // Live preview of the terminal text settings, drawn in the selected theme.
@@ -1691,6 +1869,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
       ["tasks", "Create and edit tasks", "Add tasks to the Tasks panel and edit them. Runs without asking, in Act and Auto."],
       ["sessions", "Create and edit sessions", "Start new sessions, rename them, change their colour or folder."],
       ["ui", "Show and hide panels", "Toggle the sidebar, Tasks panel, inbox and Settings page, and switch sessions."],
+      ["media", "Music and timers", "See what's playing and control it (play, pause, skip, volume), and set, pause and cancel timers. Runs without asking, in Act and Auto."],
       ["usage", "Read usage and cost", "See tokens, cost and active time per terminal and session."],
       [
         "settings",
@@ -1794,6 +1973,57 @@ export function createSettingsView(handlers: SettingsHandlers) {
       s.agentHooks = v;
       markDirty();
     });
+
+    const hearTimer = (what: "tick" | "ring", text: string) =>
+      btn("btn-secondary", text, () => void invoke("timer_preview", { what, duck: s.timerDuckAudio }));
+    const previews = document.createElement("div");
+    previews.className = "tm-preview-row";
+    previews.append(hearTimer("tick", "Hear the ticking"), hearTimer("ring", "Hear the alarm"));
+    cats.notifications.push(
+      section(
+        "Timers",
+        "Set them from the timer in the title bar, or ask the assistant.",
+        [
+          field(
+            "Finish animation",
+            toggle(s.timerAnimation, (v) => {
+              s.timerAnimation = v;
+              markDirty();
+            }),
+            { desc: "The ring closes into a striking alarm clock, with ripples running out of the title bar.", keywords: "timer animation alarm clock" }
+          ),
+          field(
+            "Tick through the last 15 seconds",
+            toggle(s.timerTickSound, (v) => {
+              s.timerTickSound = v;
+              markDirty();
+            }),
+            { keywords: "timer tick sound countdown" }
+          ),
+          field(
+            "Alarm sound",
+            toggle(s.timerRingSound, (v) => {
+              s.timerRingSound = v;
+              markDirty();
+            }),
+            { desc: "Rings until you stop it, or by itself for 45 seconds. The finished timer stays in the title bar and the inbox either way.", keywords: "timer ring alarm sound bell" }
+          ),
+          field(
+            "Lower music while the alarm starts",
+            toggle(s.timerDuckAudio, (v) => {
+              s.timerDuckAudio = v;
+              markDirty();
+            }),
+            {
+              desc: "Other apps (Spotify, a browser tab) dip for about three seconds so you hear the alarm, then come back to their volume.",
+              keywords: "timer duck music volume lower alarm",
+            }
+          ),
+          field("Preview", previews, { keywords: "timer sound listen preview" }),
+        ],
+        { keywords: "timer timers countdown pomodoro alarm focus goal" }
+      )
+    );
 
     cats.notifications.push(
       section(

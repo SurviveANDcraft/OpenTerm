@@ -1,0 +1,885 @@
+/* ================= Timer (timerWidget.ts) =================
+   Shares the island shell with Now playing (.np-island) and adds the pill,
+   the dials, the alarm clock and its 2.4 s ring cycle. The cycle matches one
+   bar of timer-ring.wav: the hammer strikes on the arpeggio (0–0.45 s) and
+   again on its answer (0.86–1.1 s). */
+
+.tm-slot,
+.tm-island {
+  --tm-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --tm-pop: cubic-bezier(0.34, 1.36, 0.5, 1);
+  --tm-hot: color-mix(in srgb, var(--status-wait) 85%, var(--accent));
+}
+
+.tm-slot {
+  position: relative;
+  flex: none;
+  display: grid;
+  pointer-events: auto;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 280ms ease, transform 520ms var(--tm-pop);
+}
+
+.tm-slot[hidden] {
+  display: none;
+}
+
+.tm-slot.shown {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------------------------------------------------------------- pill */
+
+.tm-pill {
+  position: relative;
+  z-index: 1;
+  height: 24px;
+  min-width: 24px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px 0 3px;
+  border-radius: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: default;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+  transition: background 220ms ease, color 220ms ease, box-shadow 400ms var(--tm-spring);
+}
+
+.tm-pill:hover {
+  background: color-mix(in srgb, var(--text) 9.5%, transparent);
+  color: var(--text);
+}
+
+.tm-pill.open {
+  background: color-mix(in srgb, var(--accent) 14%, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+/* Idle: just a round button. */
+.tm-pill[data-state="idle"] {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
+.tm-pill[data-state="idle"] :is(.tm-label, .tm-more, .tm-ring) {
+  display: none;
+}
+
+.tm-dial {
+  position: relative;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+}
+
+.tm-ring,
+.tm-rowring {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.tm-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text) 14%, transparent);
+  stroke-width: 2.2;
+}
+
+.tm-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  transition: stroke-dasharray 260ms linear, stroke 300ms ease;
+}
+
+.tm-icon,
+.tm-alarm {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 260ms ease, transform 460ms var(--tm-pop);
+}
+
+.tm-pill[data-state="idle"] .tm-icon {
+  opacity: 1;
+  transform: none;
+}
+
+.tm-pill:is([data-state="ringing"], [data-state="done"]) .tm-ring {
+  opacity: 0;
+  transform: rotate(-90deg) scale(1.5);
+  transition: opacity 240ms ease, transform 400ms var(--tm-spring);
+}
+
+.tm-pill:is([data-state="ringing"], [data-state="done"]) .tm-alarm {
+  opacity: 1;
+  transform: none;
+}
+
+.tm-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tm-time {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  transition: color 300ms ease;
+}
+
+.tm-goal {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+}
+
+.tm-goal[hidden],
+.tm-more[hidden] {
+  display: none;
+}
+
+.tm-more {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+/* Paused: the time breathes. */
+.tm-pill[data-state="paused"] .tm-time {
+  animation: tm-breathe 1.8s ease-in-out infinite;
+}
+
+.tm-pill[data-state="paused"] .tm-arc {
+  stroke: var(--text-faint);
+}
+
+@keyframes tm-breathe {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* The last 15 seconds. */
+.tm-pill.final .tm-arc {
+  stroke: var(--tm-hot);
+}
+
+.tm-pill.final .tm-time {
+  color: var(--tm-hot);
+}
+
+.tm-pill.final {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--tm-hot) 35%, transparent),
+    0 0 14px -6px color-mix(in srgb, var(--tm-hot) 80%, transparent);
+}
+
+/* Buttons inside the pill. */
+.tm-pill-btn {
+  display: none;
+  flex: none;
+  height: 18px;
+  margin-right: -6px;
+  padding: 0 9px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  place-items: center;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.tm-pill[data-state="ringing"] .tm-stop {
+  display: grid;
+  color: var(--on-accent);
+  background: var(--tm-hot);
+}
+
+.tm-pill[data-state="ringing"] .tm-stop:hover {
+  background: color-mix(in srgb, var(--tm-hot) 85%, white);
+}
+
+.tm-pill[data-state="done"] .tm-dismiss {
+  display: grid;
+  width: 18px;
+  padding: 0;
+  color: var(--text-faint);
+}
+
+.tm-pill[data-state="done"] .tm-dismiss:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.tm-pill-btn:focus-visible {
+  box-shadow: none;
+}
+
+/* Ringing: warm, glowing, the alarm clock striking. */
+.tm-pill[data-state="ringing"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--tm-hot) 18%, color-mix(in srgb, var(--text) 5%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tm-hot) 45%, transparent);
+  animation: tm-glow 1.2s ease-in-out infinite;
+}
+
+.tm-pill[data-state="ringing"] .tm-alarm,
+.tm-pill[data-state="ringing"] .tm-time {
+  color: var(--tm-hot);
+}
+
+.tm-pill[data-state="done"] .tm-alarm {
+  color: var(--text-dim);
+}
+
+@keyframes tm-glow {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--tm-hot) 45%, transparent),
+      0 0 10px -4px color-mix(in srgb, var(--tm-hot) 60%, transparent);
+  }
+
+  50% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--tm-hot) 70%, transparent),
+      0 0 22px -2px color-mix(in srgb, var(--tm-hot) 75%, transparent);
+  }
+}
+
+/* The alarm clock's parts. */
+.am {
+  overflow: visible;
+}
+
+.am-hammer {
+  transform-origin: 16px 7.2px;
+}
+
+.am-body {
+  transform-origin: 16px 28px;
+}
+
+.am-hands {
+  transform-origin: 16px 17.4px;
+}
+
+[data-state="ringing"] .am-hammer,
+.tm-doneview.ringing .am-hammer {
+  animation: am-hammer 2.4s linear infinite;
+}
+
+[data-state="ringing"] .am-body,
+.tm-doneview.ringing .am-body {
+  animation: am-shake 2.4s linear infinite;
+}
+
+/* Hammer: fast strikes on the arpeggio and its answer, still in between. */
+@keyframes am-hammer {
+  0% { transform: rotate(0); }
+  3% { transform: rotate(-28deg); }
+  6% { transform: rotate(28deg); }
+  9% { transform: rotate(-28deg); }
+  12% { transform: rotate(28deg); }
+  15% { transform: rotate(-24deg); }
+  18% { transform: rotate(20deg); }
+  22% { transform: rotate(0); }
+  36% { transform: rotate(0); }
+  39% { transform: rotate(-26deg); }
+  42% { transform: rotate(26deg); }
+  45% { transform: rotate(-18deg); }
+  49% { transform: rotate(0); }
+  100% { transform: rotate(0); }
+}
+
+@keyframes am-shake {
+  0% { transform: none; }
+  3% { transform: rotate(-9deg) translateY(-0.5px); }
+  6% { transform: rotate(9deg); }
+  9% { transform: rotate(-8deg) translateY(-0.5px); }
+  12% { transform: rotate(8deg); }
+  15% { transform: rotate(-6deg); }
+  18% { transform: rotate(4deg); }
+  22% { transform: none; }
+  36% { transform: none; }
+  39% { transform: rotate(-6deg); }
+  42% { transform: rotate(6deg); }
+  45% { transform: rotate(-3deg); }
+  49% { transform: none; }
+  100% { transform: none; }
+}
+
+/* Ripples running out of the pill while it rings. */
+.tm-ripples {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tm-ripples i,
+.tm-bigripples i {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  border: 1.5px solid var(--tm-hot);
+  opacity: 0;
+}
+
+.tm-slot[data-state="ringing"] .tm-ripples i {
+  animation: tm-ripple 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+
+.tm-slot[data-state="ringing"] .tm-ripples i:nth-child(2) {
+  animation-delay: 0.26s;
+}
+
+.tm-slot[data-state="ringing"] .tm-ripples i:nth-child(3) {
+  animation-delay: 0.86s;
+}
+
+@keyframes tm-ripple {
+  0% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+
+  55%,
+  100% {
+    opacity: 0;
+    transform: scale(1.22, 2);
+  }
+}
+
+/* Animations off: the states still show, nothing moves. */
+.tm-slot.no-anim .tm-ripples i,
+.tm-slot.no-anim .tm-pill,
+.tm-slot.no-anim .am-hammer,
+.tm-slot.no-anim .am-body,
+.tm-doneview.no-anim .am-hammer,
+.tm-doneview.no-anim .am-body,
+.tm-doneview.no-anim .tm-bigripples i {
+  animation: none !important;
+}
+
+/* ---------------------------------------------------------------- island */
+
+.tm-island {
+  width: 316px;
+  background: var(--bg-raised);
+}
+
+.tm-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 18px 16px;
+}
+
+.tm-body > [hidden] {
+  display: none !important;
+}
+
+.tm-active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.tm-bigdial {
+  position: relative;
+  width: 168px;
+  height: 168px;
+}
+
+.tm-bigdial svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.tm-ticks line {
+  stroke: color-mix(in srgb, var(--text) 16%, transparent);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+
+.tm-ticks line.maj {
+  stroke: color-mix(in srgb, var(--text) 32%, transparent);
+  stroke-width: 1.5;
+}
+
+.tm-bigtrack {
+  fill: none;
+  stroke: color-mix(in srgb, var(--text) 9%, transparent);
+  stroke-width: 7;
+}
+
+.tm-bigarc {
+  fill: none;
+  stroke-width: 7;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 70px 70px;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 45%, transparent));
+  transition: opacity 300ms ease;
+}
+
+.tm-tip {
+  transform-origin: 70px 70px;
+}
+
+.tm-tip circle {
+  fill: #fff;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.45));
+}
+
+.tm-bigdial.paused .tm-bigarc {
+  opacity: 0.45;
+}
+
+.tm-bigdial.final .tm-bigarc {
+  stroke: var(--tm-hot);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--tm-hot) 60%, transparent));
+}
+
+.tm-bigcenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 34px;
+  text-align: center;
+}
+
+.tm-bigtime {
+  font-family: var(--ui-display);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  transition: color 300ms ease;
+}
+
+.tm-bigdial.final .tm-bigtime {
+  color: var(--tm-hot);
+}
+
+.tm-bigdial.paused .tm-bigtime {
+  animation: tm-breathe 1.8s ease-in-out infinite;
+}
+
+.tm-biggoal {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.tm-ctrls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.tm-c {
+  height: 32px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  transition: background 150ms ease, color 150ms ease, transform 300ms var(--tm-pop);
+}
+
+.tm-c:hover {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.tm-c[hidden] {
+  display: none;
+}
+
+.tm-c-main {
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+
+.tm-c-main:hover {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+  transform: scale(1.04);
+}
+
+.tm-c-wide {
+  width: auto;
+  height: 38px;
+  padding: 0 22px;
+  border-radius: 19px;
+  font-size: 13px;
+}
+
+.tm-c:focus-visible,
+.tm-link:focus-visible,
+.tm-chip:focus-visible,
+.tm-start:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.tm-subrow {
+  display: flex;
+  gap: 16px;
+  margin-top: -4px;
+}
+
+.tm-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.tm-link:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.tm-link-danger:hover {
+  color: var(--danger);
+}
+
+/* Finished. */
+.tm-doneview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.tm-bigalarm {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 8px;
+  color: var(--text-dim);
+}
+
+.tm-doneview.ringing .tm-bigalarm {
+  color: var(--tm-hot);
+  filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--tm-hot) 55%, transparent));
+}
+
+.tm-bigripples {
+  position: absolute;
+  inset: 14px;
+}
+
+.tm-bigripples i {
+  border-radius: 50%;
+}
+
+.tm-doneview.ringing .tm-bigripples i {
+  animation: tm-bigripple 2.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+}
+
+.tm-doneview.ringing .tm-bigripples i:nth-child(2) {
+  animation-delay: 0.26s;
+}
+
+.tm-doneview.ringing .tm-bigripples i:nth-child(3) {
+  animation-delay: 0.86s;
+}
+
+@keyframes tm-bigripple {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.85);
+  }
+
+  60%,
+  100% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+.tm-donetitle {
+  font-family: var(--ui-display);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tm-donegoal {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.tm-donebtns {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tm-doneview.ringing .tm-donebtns .tm-c-main {
+  background: var(--tm-hot);
+  box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--tm-hot) 85%, transparent);
+}
+
+/* Other timers. */
+.tm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 -8px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.tm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-dim);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.tm-row:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.tm-rowring {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.tm-row-paused .tm-arc {
+  stroke: var(--text-faint);
+}
+
+.tm-row-ringing {
+  color: var(--tm-hot);
+}
+
+.tm-rowgoal {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tm-rowtime {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+/* Composer: folds open under "New timer". */
+.tm-newtoggle {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 99px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.tm-newtoggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.tm-composer {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin: -14px 0 0;
+  opacity: 0;
+  transition: grid-template-rows 460ms var(--tm-spring), opacity 260ms ease, margin 460ms var(--tm-spring);
+}
+
+.tm-composer.open {
+  grid-template-rows: 1fr;
+  margin: 0;
+  opacity: 1;
+}
+
+.tm-composer-in {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px;
+}
+
+.tm-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
+  transition: box-shadow 160ms ease, background 160ms ease;
+  user-select: text;
+}
+
+.tm-input::placeholder {
+  color: var(--text-faint);
+}
+
+.tm-input:focus {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent), 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.tm-input.bad {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 70%, transparent);
+}
+
+.tm-goalinput {
+  height: 38px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.tm-presets {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+.tm-chip {
+  height: 30px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  transition: background 150ms ease, color 150ms ease, transform 300ms var(--tm-pop);
+}
+
+.tm-chip:hover {
+  color: var(--on-accent);
+  background: var(--accent);
+  transform: translateY(-1px);
+}
+
+.tm-customrow {
+  display: flex;
+  gap: 8px;
+}
+
+.tm-start {
+  flex: none;
+  height: 34px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+  transition: background 150ms ease, transform 300ms var(--tm-pop);
+}
+
+.tm-start:hover {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+}
+
+/* ---------------------------------------------------------------- settings */
+
+.tm-preview-row {
+  display: flex;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tm-slot,
+  .tm-pill,
+  .tm-composer,
+  .tm-icon,
+  .tm-alarm {
+    transition: none;
+  }
+
+  .tm-ripples i,
+  .tm-bigripples i,
+  .tm-pill,
+  .am-hammer,
+  .am-body,
+  .tm-time,
+  .tm-bigtime {
+    animation: none !important;
+  }
+}

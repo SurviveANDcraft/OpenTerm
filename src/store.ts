@@ -4,6 +4,7 @@ import {
   DEFAULT_KEYBINDS,
   DEFAULT_DICTATION,
   DEFAULT_SETTINGS,
+  normalizeTitlebarWidgets,
   Session,
   Settings,
 } from "./types";
@@ -56,6 +57,7 @@ class Store {
         ...(parsed.settings ?? {}),
         keybinds: { ...DEFAULT_KEYBINDS, ...(parsed.settings?.keybinds ?? {}) },
         dictation: { ...structuredClone(DEFAULT_DICTATION), ...(parsed.settings?.dictation ?? {}) },
+        titlebarWidgets: normalizeTitlebarWidgets(parsed.settings?.titlebarWidgets),
       };
       // Embedded external terminals can't be restored (their HWND is gone), so
       // drop those leaves; a session left with nothing but externals disappears.

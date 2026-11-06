@@ -13,7 +13,8 @@ export type InboxKind =
   | "backup"
   | "github-outdated"
   | "harness-update"
-  | "assistant";
+  | "assistant"
+  | "timer";
 
 export interface InboxItem {
   id: string;
@@ -70,6 +71,7 @@ export const KIND_TITLE: Record<InboxKind, string> = {
   "github-outdated": "Behind GitHub",
   "harness-update": "Agent CLI update",
   assistant: "Assistant",
+  timer: "Timer",
 };
 
 /** One-line explanation of when each kind fires, shown next to its toggle in
@@ -86,6 +88,7 @@ export const KIND_HINT: Record<InboxKind, string> = {
   "github-outdated": "A repo has fallen behind its GitHub remote",
   "harness-update": "An installed agent CLI (Claude Code, Codex, …) has a newer version",
   assistant: "The assistant pinged you, e.g. when something you asked it to watch is done",
+  timer: "A timer you set has finished",
 };
 
 const MAX_ITEMS = 200;

@@ -16,6 +16,25 @@ import type { ActionContext, ActionPlan, ActionResult, Planned } from "./agentsA
 import { commandRisks } from "./actionRisk";
 import { THEMES } from "./themes";
 import { fetchPaneUsage, fmtCost, fmtDuration, fmtTokens } from "./usage";
+import { activeSource, ensureMediaFresh, formatTime, mediaControl, mediaSources, positionOf, volumeOf, type MediaSource } from "./media";
+import {
+  addTime,
+  allTimers,
+  cancelTimer,
+  dismissDone,
+  featuredTimer,
+  findTimer,
+  formatClock,
+  formatDuration,
+  parseDuration,
+  pauseTimer,
+  remainingOf,
+  restartTimer,
+  resumeTimer,
+  startTimer,
+  stopRinging,
+  type Timer,
+} from "./timers";
 import {
   isTaskDone,
   newTask,
@@ -144,6 +163,51 @@ const APP_TOOLS: AppTool[] = [
       panel: { type: "string", enum: ["sidebar", "tasks", "inbox", "settings"] },
       on: { type: "boolean", description: "true shows, false hides. Default: flip." },
     }, ["panel"]),
+  },
+  {
+    perm: "media",
+    read: true,
+    def: tool(
+      "now_playing",
+      "What's playing on this PC: Spotify, YouTube Music or anything else in a browser tab, or any app in Windows' media controls. Track, app, playing or paused, position, volume, and every other source.",
+      {},
+      []
+    ),
+  },
+  {
+    perm: "media",
+    read: false,
+    def: tool("control_media", "Control music and media playback on this PC (the sources now_playing reports). Runs without asking.", {
+      action: {
+        type: "string",
+        enum: ["play", "pause", "toggle", "next", "previous", "seek", "volume", "mute", "unmute", "shuffle", "repeat"],
+      },
+      value: { type: "number", description: "seek: position in seconds. volume: 0-100. shuffle: 1 on, 0 off." },
+      repeat: { type: "string", enum: ["none", "track", "list"], description: "For action repeat." },
+      source: { type: "string", description: "App name from now_playing (e.g. Spotify, Chrome). Default: the one in the title bar." },
+    }, ["action"]),
+  },
+  {
+    perm: "media",
+    read: true,
+    def: tool("list_timers", "List the user's timers: id, goal, state (running, paused, ringing, done), time left and length.", {}, []),
+  },
+  {
+    perm: "media",
+    read: false,
+    def: tool("set_timer", "Start a countdown timer in the title bar. When it ends it rings (if the user left the alarm on) and files an inbox item. Runs without asking.", {
+      duration: { type: "string", description: "e.g. 25m, 1h30m, 90s, 1:30. A bare number is minutes." },
+      goal: { type: "string", description: "What it's for, shown next to it. Short." },
+    }, ["duration"]),
+  },
+  {
+    perm: "media",
+    read: false,
+    def: tool("update_timer", "Change a timer: pause, resume, add time, restart, cancel, stop the alarm, or clear finished ones. Runs without asking.", {
+      action: { type: "string", enum: ["pause", "resume", "add_time", "restart", "cancel", "stop_alarm", "clear_finished"] },
+      timer: { type: "string", description: "Timer id or goal from list_timers. Default: the one in the title bar." },
+      minutes: { type: "number", description: "For add_time." },
+    }, ["action"]),
   },
   {
     perm: "settings",
@@ -303,6 +367,225 @@ function plan(p: Omit<ActionPlan, "text" | "risks" | "paneIds"> & Partial<Action
   return { plan: { text: null, risks: [], paneIds: [], ...p } };
 }
 
+// ---------------------------------------------------------------- media & timers
+
+function findSource(arg: unknown): MediaSource | null {
+  const want = str(arg).toLowerCase();
+  if (!want) return activeSource();
+  const all = mediaSources();
+  return (
+    all.find((s) => s.app.toLowerCase() === want || s.id.toLowerCase() === want) ??
+    all.find((s) => s.app.toLowerCase().includes(want)) ??
+    null
+  );
+}
+
+function describeSource(s: MediaSource, shown: boolean): string {
+  const v = volumeOf(s);
+  const parts = [
+    `${s.app}${shown ? " (in the title bar)" : ""}: ${s.status}`,
+    `"${s.title}"${s.artist ? ` by ${s.artist}` : ""}${s.album ? `, album ${s.album}` : ""}`,
+  ];
+  if (s.durationMs > 0) parts.push(`${formatTime(positionOf(s))} / ${formatTime(s.durationMs)}`);
+  if (v) parts.push(`volume ${Math.round(v.value * 100)}%${v.muted ? " (muted)" : ""}${v.scope === "system" ? " (system)" : ""}`);
+  if (s.shuffle != null) parts.push(`shuffle ${s.shuffle ? "on" : "off"}`);
+  if (s.repeat) parts.push(`repeat ${s.repeat}`);
+  const can = [s.canNext && "next", s.canPrev && "previous", s.canSeek && "seek", s.canShuffle && "shuffle", s.canRepeat && "repeat"].filter(Boolean);
+  parts.push(`can: play/pause${can.length ? `, ${can.join(", ")}` : ""}`);
+  return parts.join(" | ");
+}
+
+function describeTimer(t: Timer): string {
+  const left =
+    t.state === "running" || t.state === "paused"
+      ? `${formatClock(remainingOf(t))} left`
+      : t.state === "ringing"
+        ? "ringing now"
+        : "finished";
+  return `${t.id} | ${t.goal || "(no goal)"} | ${t.state} | ${left} | length ${formatDuration(t.durationMs)}`;
+}
+
+const MEDIA_VERBS: Record<string, string> = {
+  play: "Play",
+  pause: "Pause",
+  toggle: "Play/pause",
+  next: "Next track",
+  previous: "Previous track",
+  seek: "Seek",
+  volume: "Set volume",
+  mute: "Mute",
+  unmute: "Unmute",
+  shuffle: "Shuffle",
+  repeat: "Repeat",
+};
+
+function planMedia(args: Record<string, unknown>): Planned {
+  const action = str(args.action);
+  const verb = MEDIA_VERBS[action];
+  if (!verb) return refuse(`action must be one of ${Object.keys(MEDIA_VERBS).join(", ")}.`, "Control media");
+  const value = typeof args.value === "number" ? args.value : Number(args.value);
+  if ((action === "seek" || action === "volume") && !Number.isFinite(value)) return refuse(`${action} needs a numeric value.`, verb);
+  if (action === "volume" && (value < 0 || value > 100)) return refuse("volume is 0-100.", verb);
+  const repeat = str(args.repeat) || "list";
+  if (action === "repeat" && !["none", "track", "list"].includes(repeat)) return refuse("repeat is none, track or list.", verb);
+  const known = findSource(args.source);
+  const detail =
+    action === "volume"
+      ? `Volume ${Math.round(value)}%`
+      : action === "seek"
+        ? `Jump to ${formatTime(value * 1000)}`
+        : action === "repeat"
+          ? `Repeat ${repeat}`
+          : action === "shuffle"
+            ? `Shuffle ${value ? "on" : "off"}`
+            : verb;
+  return plan({
+    tool: "control_media",
+    tier: "media",
+    verb,
+    target: known?.app ?? (str(args.source) || null),
+    detail,
+    deniedLabel: `Denied: ${verb.toLowerCase()}`,
+    async execute() {
+      await ensureMediaFresh();
+      const s = findSource(args.source);
+      if (!s)
+        return failed(
+          str(args.source) ? `nothing named "${str(args.source)}" is playing. Use now_playing.` : "nothing is playing on this PC.",
+          verb
+        );
+      const say = (what: string) => done(`${what} (${s.app}: "${s.title}").`, `${what} · ${s.title}`);
+      switch (action) {
+        case "play":
+          if (s.status !== "playing") mediaControl(s, "toggle");
+          return say("Playing");
+        case "pause":
+          if (s.status === "playing") mediaControl(s, "toggle");
+          return say("Paused");
+        case "toggle": {
+          const was = s.status;
+          mediaControl(s, "toggle");
+          return say(was === "playing" ? "Paused" : "Playing");
+        }
+        case "next":
+          if (!s.canNext) return failed(`${s.app} doesn't offer a next track right now.`, verb);
+          mediaControl(s, "next");
+          return done(`Skipped to the next track in ${s.app}.`, "Next track");
+        case "previous":
+          if (!s.canPrev) return failed(`${s.app} doesn't offer a previous track right now.`, verb);
+          mediaControl(s, "prev");
+          return done(`Went back a track in ${s.app}.`, "Previous track");
+        case "seek":
+          if (!s.canSeek) return failed(`${s.app} doesn't allow seeking this item.`, verb);
+          mediaControl(s, "seek", Math.max(0, value) * 1000);
+          return say(`Jumped to ${formatTime(value * 1000)}`);
+        case "volume": {
+          const v = volumeOf(s);
+          if (!v) return failed("no volume control found for that source.", verb);
+          if (v.muted) mediaControl(s, "mute", 0);
+          mediaControl(s, "volume", value / 100);
+          return done(
+            `Set ${v.scope === "app" ? `${s.app}'s` : "the system"} volume to ${Math.round(value)}%.`,
+            `Volume ${Math.round(value)}%`
+          );
+        }
+        case "mute":
+        case "unmute":
+          if (!volumeOf(s)) return failed("no volume control found for that source.", verb);
+          mediaControl(s, "mute", action === "mute" ? 1 : 0);
+          return say(action === "mute" ? "Muted" : "Unmuted");
+        case "shuffle":
+          if (!s.canShuffle) return failed(`${s.app} doesn't expose shuffle to Windows.`, verb);
+          mediaControl(s, "shuffle", value ? 1 : 0);
+          return say(`Shuffle ${value ? "on" : "off"}`);
+        case "repeat":
+          if (!s.canRepeat) return failed(`${s.app} doesn't expose repeat to Windows.`, verb);
+          mediaControl(s, "repeat", repeat === "track" ? 1 : repeat === "list" ? 2 : 0);
+          return say(`Repeat ${repeat}`);
+      }
+      return failed("unknown action.", verb);
+    },
+  });
+}
+
+const TIMER_VERBS: Record<string, string> = {
+  pause: "Pause timer",
+  resume: "Resume timer",
+  add_time: "Add time",
+  restart: "Restart timer",
+  cancel: "Cancel timer",
+  stop_alarm: "Stop alarm",
+  clear_finished: "Clear finished timers",
+};
+
+function planTimer(name: string, args: Record<string, unknown>): Planned {
+  if (name === "set_timer") {
+    const ms = parseDuration(str(args.duration));
+    if (ms == null) return refuse('duration not understood. Use e.g. "25m", "1h30m", "90s" (1 second to 24 hours).', "Set timer");
+    const goal = str(args.goal).slice(0, 80);
+    return plan({
+      tool: name,
+      tier: "media",
+      verb: "Set timer",
+      target: goal || null,
+      detail: `${formatDuration(ms)}${goal ? ` · ${goal}` : ""}`,
+      deniedLabel: `Denied: ${formatDuration(ms)} timer`,
+      async execute() {
+        const t = startTimer(ms, goal);
+        return done(
+          `Started a ${formatDuration(ms)} timer${goal ? ` for "${goal}"` : ""} (id ${t.id}). It's in the title bar.`,
+          `Set a ${formatDuration(ms)} timer${goal ? ` · ${goal}` : ""}`
+        );
+      },
+    });
+  }
+  const action = str(args.action);
+  const verb = TIMER_VERBS[action];
+  if (!verb) return refuse(`action must be one of ${Object.keys(TIMER_VERBS).join(", ")}.`, "Update timer");
+  if (action === "stop_alarm" || action === "clear_finished") {
+    return plan({
+      tool: name,
+      tier: "media",
+      verb,
+      target: null,
+      detail: verb,
+      deniedLabel: `Denied: ${verb.toLowerCase()}`,
+      async execute() {
+        if (action === "stop_alarm") stopRinging();
+        else dismissDone();
+        return done(action === "stop_alarm" ? "Stopped the alarm." : "Cleared finished timers.", verb);
+      },
+    });
+  }
+  const t = str(args.timer) ? findTimer(str(args.timer)) : featuredTimer();
+  if (!t) return refuse(str(args.timer) ? `no single timer matches "${str(args.timer)}". Use list_timers.` : "there are no timers.", verb);
+  const minutes = typeof args.minutes === "number" ? args.minutes : Number(args.minutes);
+  if (action === "add_time" && !(minutes > 0 && minutes <= 600)) return refuse("add_time needs minutes (0-600).", verb);
+  const label = t.goal || formatDuration(t.durationMs);
+  return plan({
+    tool: name,
+    tier: "media",
+    verb,
+    target: label,
+    detail: action === "add_time" ? `+${minutes} min` : verb,
+    deniedLabel: `Denied: ${verb.toLowerCase()} ${label}`,
+    async execute() {
+      if (!allTimers().includes(t)) return failed("that timer is gone.", verb);
+      if (action === "pause") {
+        if (t.state !== "running") return failed(`it is ${t.state}, not running.`, verb);
+        pauseTimer(t);
+      } else if (action === "resume") {
+        if (t.state !== "paused") return failed(`it is ${t.state}, not paused.`, verb);
+        resumeTimer(t);
+      } else if (action === "add_time") addTime(t, minutes * 60_000);
+      else if (action === "restart") restartTimer(t);
+      else if (action === "cancel") cancelTimer(t);
+      const now = allTimers().includes(t) ? ` Now: ${describeTimer(t)}` : "";
+      return done(`${verb}: "${label}".${now}`, `${verb} · ${label}`);
+    },
+  });
+}
+
 // ---------------------------------------------------------------- planning
 
 /** Checks one app action and describes it, without running anything. */
@@ -316,6 +599,9 @@ export function planAppAction(name: string, argsJson: string, ctx: ActionContext
   const app = ctx.host.app;
   const noSession = (label: string): Planned =>
     refuse(str(args.session) ? `no session named "${str(args.session)}". Use list_sessions.` : "no session in scope; name one.", label);
+
+  if (name === "control_media") return planMedia(args);
+  if (name === "set_timer" || name === "update_timer") return planTimer(name, args);
 
   switch (name) {
     case "create_task": {
@@ -561,6 +847,20 @@ export async function runAppRead(name: string, argsJson: string, ctx: ActionCont
       tasks.length > MAX_TASKS_LISTED ? ` (first ${MAX_TASKS_LISTED} shown)` : ""
     }.`;
     return out([head, ...lines].join("\n"), `Listed tasks in ${s.name}`);
+  }
+
+  if (name === "now_playing") {
+    await ensureMediaFresh();
+    const all = mediaSources();
+    if (!all.length) return out("Nothing is playing, and no app is reporting media to Windows.", "Checked what's playing");
+    const shown = activeSource();
+    const lines = [...all].sort((a, b) => Number(b === shown) - Number(a === shown)).map((s) => describeSource(s, s === shown));
+    return out(lines.join("\n"), shown ? `Now playing: ${shown.title}` : "Checked what's playing");
+  }
+
+  if (name === "list_timers") {
+    const all = allTimers();
+    return out(all.length ? all.map(describeTimer).join("\n") : "No timers.", "Listed timers");
   }
 
   if (name === "get_settings") {

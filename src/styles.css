@@ -6233,7 +6233,7 @@ body.dragging-file-dock {
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: min(52vw, 620px);
+  max-width: min(64vw, 760px);
   padding: 0 14px;
   font-size: 12px;
   transition: opacity 200ms var(--ease-out);

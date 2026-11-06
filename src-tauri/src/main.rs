@@ -49,8 +49,10 @@ mod dictation;
 mod git;
 mod github;
 mod harness;
+mod media;
 mod secrets;
 mod shell_integration;
+mod timers;
 mod usage;
 
 struct PtyHandle {
@@ -1885,6 +1887,13 @@ fn main() {
             github::gh_issue_assign_me,
             harness::check_harness_updates,
             harness::update_harness,
+            media::media_watch,
+            media::media_control,
+            media::media_focus_source,
+            timers::timer_schedule,
+            timers::timer_cancel,
+            timers::timer_stop_ring,
+            timers::timer_preview,
             dictation::host::dictation_sync,
             dictation::host::dictation_quit_agent,
             dictation::host::dictation_ensure_agent,

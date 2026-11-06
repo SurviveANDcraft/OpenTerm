@@ -44,6 +44,18 @@ windows = { version = "0.61", features = [
     "Win32_System_Memory",
     "Win32_System_Ole",
     "Win32_UI_HiDpi",
+    # Now playing (media.rs): system media controls, cover art, per-app volume.
+    "Foundation",
+    "Foundation_Collections",
+    "Media",
+    "Media_Control",
+    "Storage",
+    "Storage_Streams",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Variant",
+    "Win32_UI_Accessibility",
 ] }
 tauri-plugin-clipboard-manager = "2.3.2"
 # OpenCode moved its message store from per-message JSON files into a single
