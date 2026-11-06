@@ -32,9 +32,9 @@ const CLOSE = `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true
  *  Elided in JS rather than with text-overflow so the visible part is always
  *  the tail (CSS would clip it) and never bidi-reordered. */
 function prettyPath(p: string): string {
-  const home = /^[A-Za-z]:\Users\[^\]+/.exec(p);
+  const home = /^[A-Za-z]:\\Users\\[^\\]+/.exec(p);
   const rel = home ? "~\\" + p.slice(home[0].length + 1) : p;
-  const parts = rel.split(/[\/]+/).filter(Boolean);
+  const parts = rel.split(/[\\/]+/).filter(Boolean);
   if (parts.length <= 3) return parts.join("\\");
   return "…\\" + parts.slice(-2).join("\\");
 }
