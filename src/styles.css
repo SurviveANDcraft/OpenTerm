@@ -545,6 +545,26 @@ body.resizing-sidebar .sidebar {
   white-space: nowrap;
 }
 
+.tree-name mark {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Filter results: the file's folder, after its name. */
+.tree-dir {
+  flex: 1;
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 .tree-loading {
   flex: none;
   color: var(--text-faint);

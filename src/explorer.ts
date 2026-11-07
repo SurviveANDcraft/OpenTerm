@@ -343,6 +343,13 @@ export function createExplorer(handlers: ExplorerHandlers) {
   let selectedPath: string | null = null;
   let loadError: string | null = null;
   let renamingPath: string | null = null;
+  /** While filtering: ranked matches from the whole folder (search.rs), not
+   *  just the levels that happen to be expanded. null = not filtering. */
+  let matches: TreeNode[] | null = null;
+  /** Per match: its folder relative to the root, and which name letters matched. */
+  const matchInfo = new WeakMap<TreeNode, { dir: string; hit: Set<number> }>();
+  let filterToken = 0;
+  let filterTimer = 0;
 
   // Right-click menu for a tree row (Open in Explorer / Copy Path / Rename /
   // Delete) — one shared instance, repositioned and re-targeted on open.
@@ -521,7 +528,25 @@ export function createExplorer(handlers: ExplorerHandlers) {
       iconMarkup(entry) +
       `<span class="tree-name"></span>` +
       (node.loading ? `<span class="tree-loading">⋯</span>` : "");
-    row.querySelector(".tree-name")!.textContent = entry.name;
+    const info = matchInfo.get(node);
+    const nameEl = row.querySelector<HTMLElement>(".tree-name")!;
+    if (info) {
+      [...entry.name].forEach((ch, i) => {
+        if (info.hit.has(i)) {
+          const m = document.createElement("mark");
+          m.textContent = ch;
+          nameEl.appendChild(m);
+        } else nameEl.append(ch);
+      });
+      if (info.dir) {
+        const dir = document.createElement("span");
+        dir.className = "tree-dir";
+        dir.textContent = info.dir;
+        nameEl.after(dir);
+      }
+    } else {
+      nameEl.textContent = entry.name;
+    }
 
     const activate = () => {
       if (entry.is_dir) {
@@ -543,7 +568,7 @@ export function createExplorer(handlers: ExplorerHandlers) {
 
   function render(): void {
     const q = filter.trim().toLowerCase();
-    const rows = flatten(rootNodes, q);
+    const rows = q && matches ? matches : flatten(rootNodes, q);
     list.replaceChildren(...rows.map(buildRow));
     if (loadError) status.textContent = loadError;
     else status.textContent = rows.length === 0 ? (q ? "No matches" : rootPath ? "Empty folder" : "") : "";
@@ -590,9 +615,46 @@ export function createExplorer(handlers: ExplorerHandlers) {
 
   refreshBtn.addEventListener("click", () => void loadRoot(rootPath));
 
+  /** Ranks every file under the root against the filter (fuzzy, gitignore
+   *  aware). Until the first answer lands the expanded levels filter as before. */
+  function runFilter(): void {
+    const q = filter.trim();
+    const my = ++filterToken;
+    window.clearTimeout(filterTimer);
+    if (!q || !rootPath) {
+      matches = null;
+      render();
+      return;
+    }
+    const root = rootPath;
+    filterTimer = window.setTimeout(() => {
+      void invoke<{ root: string; rel: string; positions: number[] }[]>("search_file_names", {
+        query: q,
+        roots: [root],
+        limit: 150,
+      })
+        .then((hits) => {
+          if (my !== filterToken) return;
+          const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
+          matches = hits.map((h) => {
+            const name = h.rel.split("/").pop() || h.rel;
+            const dirLen = h.rel.length - name.length;
+            const path = root.replace(/[\\/]+$/, "") + sep + h.rel.split("/").join(sep);
+            const node = makeNode({ name, path, is_dir: false }, 0);
+            const hit = new Set(h.positions.filter((p) => p >= dirLen).map((p) => p - dirLen));
+            matchInfo.set(node, { dir: h.rel.slice(0, Math.max(0, dirLen - 1)), hit });
+            return node;
+          });
+          render();
+        })
+        .catch(() => {});
+    }, 50);
+    render();
+  }
+
   searchInput.addEventListener("input", () => {
     filter = searchInput.value;
-    render();
+    runFilter();
   });
 
   /** (Re)opens the browser rooted at the given folder (or the user's home dir),
@@ -603,6 +665,8 @@ export function createExplorer(handlers: ExplorerHandlers) {
     selectedPath = null;
     filter = "";
     searchInput.value = "";
+    matches = null;
+    filterToken++;
     void loadRoot(initialPath);
   }
 
