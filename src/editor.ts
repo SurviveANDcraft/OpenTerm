@@ -371,6 +371,15 @@ export function createFileEditor(handlers: FileEditorHandlers) {
     return dirty;
   }
 
+  /** Puts the cursor on 1-based `line` and scrolls it to the middle. */
+  function gotoLine(line: number): void {
+    if (!view) return;
+    const doc = view.state.doc;
+    const pos = doc.line(Math.min(Math.max(1, line), doc.lines)).from;
+    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+    view.focus();
+  }
+
   function focus(): void {
     view?.focus();
   }
@@ -390,7 +399,7 @@ export function createFileEditor(handlers: FileEditorHandlers) {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } });
   }
 
-  return { el, open, save, isDirty, focus, containsFocus, content, setContent };
+  return { el, open, save, isDirty, focus, containsFocus, content, setContent, gotoLine };
 }
 
 export interface FileViewerHandlers {
@@ -655,6 +664,11 @@ export function createFileViewerPanel(
       return editor.save();
     },
     isDirty: () => !previewing && (editor.isDirty() || (mdRendered && wysiwyg.edited())),
+    /** Jumps to a 1-based line in the raw editor (a no-op for previews and
+     *  rendered Markdown, which have no lines to land on). */
+    gotoLine: (line: number) => {
+      if (!previewing && !mdRendered) editor.gotoLine(line);
+    },
     focus: () => {
       if (previewing) return;
       if (mdRendered) wysiwyg.focus();

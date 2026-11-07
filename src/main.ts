@@ -133,7 +133,7 @@ import {
   settleIn,
   type Rect,
 } from "./filePanes";
-import { createSearchModal } from "./searchModal";
+import { createSearchModal, type SearchPane } from "./searchModal";
 import { createTitlebar } from "./titlebar";
 import { initTimers } from "./timers";
 import { quotePathForShell } from "./explorer";
@@ -2317,13 +2317,13 @@ function sendPaneContext(srcId: string, targetId: string): void {
   target.focus();
 }
 
-function openFile(path: string, name: string, pending?: string): void {
+function openFile(path: string, name: string, pending?: string): Promise<void> {
   openFileName = name;
   openFilePath = path;
   fileViewerOpen = true;
   main.classList.add("file-viewer-open");
   syncAllExternal(); // hide docked windows behind the file viewer
-  void fileViewer.open(path, name, pending);
+  return fileViewer.open(path, name, pending);
 }
 
 function closeFile(): void {
@@ -3357,11 +3357,117 @@ function bindFileEject(bar: HTMLElement): void {
 
 bindFileEject(fileViewer.header);
 
+/** Switches to a pane's session and focuses it, for search results. */
+function goToPane(paneId: string): PaneTerm | null {
+  const session = sessionOfPane(paneId);
+  if (!session) return null;
+  if (fileViewerOpen) closeFile();
+  focusedPane.set(session.id, paneId);
+  if (session.zoomed && session.zoomed !== paneId) {
+    session.zoomed = null;
+    rerender(session);
+  }
+  if (store.state.activeSessionId !== session.id) setActiveSession(session.id);
+  focusPane(paneId);
+  return panes.get(paneId) ?? null;
+}
+
+/** Reopens a past Claude Code / Codex conversation from search: jumps to the
+ *  pane already running it, or opens a new pane in the session rooted at its
+ *  folder (the active one otherwise) and resumes it there by id. */
+function resumeChat(agent: string, chatId: string, cwd: string): void {
+  for (const s of visibleSessions()) {
+    for (const id of collectLeaves(s.tree)) {
+      const leaf = findLeaf(s.tree, id) as LeafNode | undefined;
+      if (leaf?.lastCommand?.includes(chatId) && panes.has(id)) {
+        goToPane(id);
+        return;
+      }
+    }
+  }
+  const base = agent === "codex" ? "codex" : "claude";
+  const command = buildSessionResumeCommand(base, base, chatId);
+  if (!command) return;
+  const key = folderKey(cwd);
+  let session = (key && visibleSessions().find((s) => folderKey(s.cwd) === key)) || activeSession();
+  if (!session) {
+    newSession({ name: folderLabel(cwd), count: 1, cwd: cwd || null, command: null });
+    session = activeSession();
+    if (!session) return;
+  }
+  if (store.state.activeSessionId !== session.id) setActiveSession(session.id);
+  const anchorId = focusedPane.get(session.id) ?? collectLeaves(session.tree)[0];
+  if (!anchorId) return;
+  const newId = uid();
+  createPaneTerm(newId);
+  session.tree = splitLeaf(session.tree, anchorId, "row", newId);
+  session.zoomed = null;
+  const leaf = findLeaf(session.tree, newId) as LeafNode | undefined;
+  if (leaf) {
+    leaf.lastCommand = command;
+    if (cwd && folderKey(cwd) !== folderKey(session.cwd)) leaf.cwd = cwd;
+  }
+  // rerender spawns the pane and replays its remembered command; verbatim,
+  // since it already names the exact conversation.
+  freshAgentPanes.add(newId);
+  rerender(session);
+  requestAnimationFrame(() => focusPane(newId));
+  store.save(true);
+}
+
 const searchModal = createSearchModal({
-  getFocusedPane: () => {
+  context: () => {
+    const active = activeSession();
+    const sessions = visibleSessions()
+      .slice()
+      .sort((a, b) => Number(b.id === active?.id) - Number(a.id === active?.id))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        color: s.color,
+        cwd: s.cwd ?? null,
+        panes: collectLeaves(s.tree).flatMap((id): SearchPane[] => {
+          const term = panes.get(id);
+          if (term) return [{ id, title: term.title, kind: "term" as const, term }];
+          const browser = browserPanes.get(id);
+          if (browser) return [{ id, title: browser.title, kind: "browser" as const }];
+          const file = filePanes.get(id);
+          if (file) return [{ id, title: file.title, kind: "file" as const }];
+          return [];
+        }),
+      }));
+    return {
+      sessions,
+      activeSessionId: active?.id ?? null,
+      focusedPaneId: active ? focusedPane.get(active.id) ?? null : null,
+    };
+  },
+  goToSession: (id) => {
+    if (fileViewerOpen) closeFile();
+    setActiveSession(id);
+  },
+  goToPane,
+  openFile: (path, name, line) => {
+    void openFile(path, name).then(() => {
+      if (line && fileViewer.path() === path) fileViewer.gotoLine(line);
+    });
+  },
+  insertPath: (path) => {
     const session = activeSession();
-    const focused = session ? focusedPane.get(session.id) : undefined;
-    return focused ? panes.get(focused) ?? null : null;
+    const id = session ? focusedPane.get(session.id) : undefined;
+    if (id) typePathsIntoPane(id, quotePathForShell(path));
+  },
+  resumeChat,
+  openSiteInApp: (url) => {
+    let session = activeSession();
+    if (!session) {
+      newSession({ count: 1 });
+      session = activeSession();
+      if (!session) return;
+    }
+    if (fileViewerOpen) closeFile();
+    const anchor = focusedPane.get(session.id) ?? collectLeaves(session.tree)[0];
+    if (anchor) openLinkInBrowserPane(anchor, url);
   },
 });
 

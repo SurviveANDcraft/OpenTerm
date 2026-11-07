@@ -50,6 +50,7 @@ mod git;
 mod github;
 mod harness;
 mod media;
+mod search;
 mod secrets;
 mod shell_integration;
 mod timers;
@@ -1861,6 +1862,12 @@ fn main() {
             shell_integration::unregister_shell_integration,
             shell_integration::shell_integration_status,
             usage::pane_usage,
+            search::search_chats,
+            search::search_file_names,
+            search::search_file_contents,
+            search::search_warm,
+            search::list_browsers,
+            search::open_url_with,
             usage::folder_usage,
             usage::usage_pricing_path,
             usage::forget_pane_usage,

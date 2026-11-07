@@ -1,5 +1,5 @@
-/* ================= Highlight search popup =================
-   Global "search + jump + flash" over the focused pane's buffer. Chrome
+/* ================= Universal search popup (Ctrl+S) =================
+   One box over terminals, files, past chats and websites. Chrome
    (overlay, card, footer, match counter) follows the active theme's vars like
    every other modal; the input's animated border keeps a fixed violet→pink
    glow on purpose, so even neutral themes (Mono, Slate) get a bit of color
@@ -14,7 +14,7 @@
   backdrop-filter: blur(2px);
   justify-content: center;
   align-items: flex-start;
-  padding-top: 14vh;
+  padding-top: 11vh;
 }
 
 .search-modal-overlay.visible {
@@ -22,7 +22,7 @@
 }
 
 .search-modal {
-  width: min(520px, calc(100vw - 64px));
+  width: min(720px, calc(100vw - 64px));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -46,7 +46,6 @@
 .search-container {
   position: relative;
   width: 100%;
-  max-width: 480px;
   height: 54px;
 }
 
@@ -77,8 +76,8 @@
   content: "";
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 480px;
-  height: 480px;
+  width: 900px;
+  height: 900px;
   transform: translate(-50%, -50%) rotate(0deg);
   background-image: conic-gradient(
     from 0deg,
@@ -102,8 +101,8 @@
   content: "";
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 420px;
-  height: 420px;
+  width: 860px;
+  height: 860px;
   transform: translate(-50%, -50%) rotate(0deg);
   background-image: conic-gradient(
     from 0deg,
@@ -127,8 +126,8 @@
   content: "";
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 420px;
-  height: 420px;
+  width: 860px;
+  height: 860px;
   transform: translate(-50%, -50%) rotate(0deg);
   background-image: conic-gradient(
     from 0deg,
@@ -147,8 +146,8 @@
   content: "";
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 420px;
-  height: 420px;
+  width: 860px;
+  height: 860px;
   transform: translate(-50%, -50%) rotate(0deg);
   background-image: conic-gradient(
     from 0deg,
@@ -235,16 +234,184 @@
   pointer-events: none;
 }
 
-/* ---- match counter ---- */
+/* ---- filter chip (file: chat: term: site:) ---- */
 
-.search-status {
-  min-height: 16px;
-  font-size: 12px;
+.search-chip {
+  position: absolute;
+  top: 50%;
+  left: 42px;
+  transform: translateY(-50%);
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, #cf30aa 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, #cf30aa 16%, var(--bg-raised));
+  color: var(--text);
+  font: 600 12px var(--ui-font);
+  cursor: pointer;
+}
+
+.search-chip:hover {
+  background: color-mix(in srgb, #cf30aa 26%, var(--bg-raised));
+}
+
+.search-container.has-chip .search-input {
+  padding-left: calc(46px + var(--chip-w, 92px));
+}
+
+.search-container.has-chip #input-mask {
+  display: none;
+}
+
+/* ---- results ---- */
+
+.search-results {
+  width: 100%;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+  scrollbar-width: thin;
+}
+
+.search-results[hidden] {
+  display: none;
+}
+
+.search-section {
+  padding: 10px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.search-section:first-child {
+  padding-top: 4px;
+}
+
+.search-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.search-row.selected {
+  background: var(--bg-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.search-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-row-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 12.5px/1.45 var(--mono);
+  color: var(--text);
+}
+
+.search-row-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.search-row mark {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--text);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.search-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
+.search-kbd-like {
+  display: inline-block;
+  min-width: 42px;
+  color: var(--accent);
+}
+
+.search-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-soft);
+  font-size: 10.5px;
   color: var(--text-dim);
 }
 
-.search-status.no-match {
-  color: var(--danger);
+.search-more {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+}
+
+.search-row.selected .search-more {
+  color: var(--text);
+}
+
+.search-submenu {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  z-index: 2;
+  min-width: 210px;
+  padding: 4px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  animation: search-modal-slide 120ms ease-out;
+}
+
+.search-subitem {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.search-subitem.selected {
+  background: var(--bg-hover);
+}
+
+.search-empty,
+.search-pending {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.search-empty {
+  text-align: center;
 }
 
 /* ---- footer hints ---- */

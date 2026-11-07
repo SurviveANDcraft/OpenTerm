@@ -61,7 +61,7 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 
 /// Parses the fixed `YYYY-MM-DDTHH:MM:SS[.fff]Z` shape every harness writes.
 /// Returns epoch milliseconds. Anything else yields `None` rather than a guess.
-fn parse_iso_ms(s: &str) -> Option<i64> {
+pub(crate) fn parse_iso_ms(s: &str) -> Option<i64> {
     let b = s.as_bytes();
     if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || (b[10] != b'T' && b[10] != b' ') {
         return None;
@@ -98,7 +98,7 @@ fn day_key(ms: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(crate) fn home_dir() -> Option<PathBuf> {
     std::env::var("USERPROFILE")
         .ok()
         .or_else(|| std::env::var("HOME").ok())
@@ -2324,7 +2324,7 @@ fn jsonl_lines_rev(path: &Path, full: bool) -> Vec<String> {
 /// A Claude Code `user` record's typed text, or None for everything that
 /// shares the record type without being a prompt: tool results, meta
 /// injections, slash-command wrappers, sub-agent (sidechain) traffic.
-fn claude_user_text(v: &Value) -> Option<String> {
+pub(crate) fn claude_user_text(v: &Value) -> Option<String> {
     if v.get("type").and_then(Value::as_str) != Some("user")
         || v.get("isMeta").and_then(Value::as_bool) == Some(true)
         || v.get("isSidechain").and_then(Value::as_bool) == Some(true)

@@ -286,6 +286,9 @@ export class PaneTerm {
    *  overlay draws with. See renderHighlights(). */
   private hlNeedle = "";
   private hlActive: { row: number; col: number } | null = null;
+  /** Logical lines of the active buffer for universal search, rebuilt only
+   *  after output has changed it. `rows[i]` is the buffer row line i starts on. */
+  private lineCache: { rows: number[]; text: string[]; lower: string[]; alt: boolean } | null = null;
   private hlLayer: HTMLElement | null = null;
   private hlBoxes: HTMLElement[] = [];
 
@@ -1071,7 +1074,9 @@ export class PaneTerm {
   }
 
   write(data: Uint8Array): void {
-    if (!this.disposed) this.term.write(data);
+    if (this.disposed) return;
+    this.lineCache = null;
+    this.term.write(data);
   }
 
   applySettings(s: Settings): void {
@@ -1319,6 +1324,67 @@ export class PaneTerm {
     this.el.classList.remove("search-preview");
     this.hlNeedle = "";
     this.hlActive = null;
+    this.renderHighlights();
+  }
+
+  private logicalLines(): NonNullable<PaneTerm["lineCache"]> {
+    const buf = this.term.buffer.active;
+    const alt = buf.type === "alternate";
+    if (this.lineCache && this.lineCache.alt === alt) return this.lineCache;
+    const rows: number[] = [];
+    const text: string[] = [];
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      if (!line) continue;
+      const t = line.translateToString(true);
+      if (line.isWrapped && text.length) text[text.length - 1] += t;
+      else {
+        rows.push(i);
+        text.push(t);
+      }
+    }
+    this.lineCache = { rows, text, lower: text.map((t) => t.toLowerCase()), alt };
+    return this.lineCache;
+  }
+
+  /** Universal search: lines of this terminal that contain every word
+   *  (lower-cased), newest first, plus how many matched in all. */
+  searchLines(words: string[], max: number): { hits: { row: number; text: string }[]; total: number } {
+    if (this.disposed || words.length === 0) return { hits: [], total: 0 };
+    const { rows, text, lower } = this.logicalLines();
+    const hits: { row: number; text: string }[] = [];
+    let total = 0;
+    for (let i = lower.length - 1; i >= 0; i--) {
+      const l = lower[i];
+      if (!words.every((w) => l.includes(w))) continue;
+      total++;
+      if (hits.length < max) hits.push({ row: rows[i], text: text[i].trim() });
+    }
+    return { hits, total };
+  }
+
+  /** Lights up `needle` like previewSearch(), but makes the match on the
+   *  logical line starting at `row` the active one and scrolls it into view. */
+  revealMatch(needle: string, row: number): void {
+    if (this.disposed) return;
+    const n = needle.toLowerCase();
+    if (!n) return;
+    const buf = this.term.buffer.active;
+    let active = { row, col: 0 };
+    for (let r = row; r < buf.length; r++) {
+      if (r > row && !buf.getLine(r)?.isWrapped) break;
+      const cols = this.matchCols(r, n);
+      if (cols.length) {
+        active = { row: r, col: cols[0] };
+        break;
+      }
+    }
+    this.hlNeedle = n;
+    this.hlActive = active;
+    this.el.classList.add("search-preview");
+    if (active.row < buf.viewportY || active.row >= buf.viewportY + this.term.rows) {
+      this.term.scrollToLine(Math.max(0, active.row - Math.floor(this.term.rows / 2)));
+    }
     this.renderHighlights();
   }
 

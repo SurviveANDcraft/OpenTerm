@@ -444,7 +444,7 @@ export const ACTIONS = {
   fontDec: "Font size −",
   fontReset: "Font size reset",
   search: "Find in terminal",
-  highlightSearch: "Highlight search",
+  highlightSearch: "Search everywhere",
   queueCommand: "Queue command (run after current finishes)",
   cheatSheet: "Shortcut cheat sheet",
   openSettings: "Open settings",
