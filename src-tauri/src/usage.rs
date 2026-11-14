@@ -2597,6 +2597,13 @@ fn codex_account_window(v: &Value) -> Option<UsageWindow> {
 /// minute, long enough that several Codex panes share one request.
 const CODEX_USAGE_CACHE_MS: i64 = 45_000;
 
+/// Drops the cached limits: they belong to whichever account was signed in
+/// when they were fetched.
+pub fn forget_usage_limits() {
+    *codex_usage_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *claude_usage_cache().lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 fn codex_usage_cache() -> &'static Mutex<Option<UsageLimit>> {
     static CACHE: OnceLock<Mutex<Option<UsageLimit>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(None))

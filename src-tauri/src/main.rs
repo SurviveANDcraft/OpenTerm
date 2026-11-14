@@ -42,6 +42,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 // ScreenToClient is imported from Graphics::Gdi above.
 
+mod accounts;
 mod agent_hooks;
 mod assistant;
 mod browser;
@@ -1830,6 +1831,10 @@ fn main() {
             find_in_backups,
             enhance_prompt,
             name_notification,
+            accounts::accounts_list,
+            accounts::accounts_switch,
+            accounts::accounts_remove,
+            accounts::accounts_begin_login,
             secrets::commands::secrets_status,
             secrets::commands::secret_set,
             secrets::commands::secret_clear,
