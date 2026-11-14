@@ -63,7 +63,7 @@ export interface SettingsHandlers {
   onConfirm(opts: ConfirmOptions): Promise<boolean>;
 }
 
-type CatId = "appearance" | "terminal" | "ai" | "dictation" | "notifications" | "keyboard" | "sessions" | "about";
+type CatId = "appearance" | "ai" | "dictation" | "notifications" | "keyboard" | "sessions" | "about";
 
 const svg = (body: string) =>
   `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
@@ -72,14 +72,8 @@ const CATEGORIES: { id: CatId; label: string; desc: string; icon: string }[] = [
   {
     id: "appearance",
     label: "Appearance",
-    desc: "Theme, fonts and how your terminals look.",
+    desc: "Theme, fonts, shell and how your terminals look.",
     icon: svg('<circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/>'),
-  },
-  {
-    id: "terminal",
-    label: "Terminal",
-    desc: "Shell, scrollback and Windows integration.",
-    icon: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5l2 1.5-2 1.5M8.5 10H11"/>'),
   },
   {
     id: "ai",
@@ -1353,7 +1347,6 @@ export function createSettingsView(handlers: SettingsHandlers) {
     const s = draft;
     const cats: Record<CatId, HTMLElement[]> = {
       appearance: [],
-      terminal: [],
       ai: [],
       dictation: [],
       notifications: [],
@@ -1590,7 +1583,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
     scrollUnit.textContent = "lines";
     scrollWrap.append(scrollback, scrollUnit);
 
-    cats.terminal.push(
+    cats.appearance.push(
       section(
         "Shell",
         null,
@@ -1614,7 +1607,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
       markDirty();
     });
 
-    cats.terminal.push(
+    cats.appearance.push(
       section(
         "Windows integration",
         null,
