@@ -1944,6 +1944,27 @@ async function addPaneOfKind(kindId: string): Promise<void> {
   store.save(true);
 }
 
+/** Opens a terminal beside the focused pane and types a one-off command into
+ *  it. Unlike an agent pane, the command isn't remembered for the next launch. */
+function runInNewPane(command: string): void {
+  let session = activeSession();
+  if (!session) {
+    newSession({ count: 1 });
+    session = activeSession();
+    if (!session) return;
+  }
+  const anchorId = focusedPane.get(session.id) ?? collectLeaves(session.tree)[0];
+  if (!anchorId) return;
+  const newId = uid();
+  createPaneTerm(newId);
+  session.tree = splitLeaf(session.tree, anchorId, "row", newId);
+  session.zoomed = null;
+  rerender(session);
+  setTimeout(() => void writePty(newId, `${command}`), 700);
+  requestAnimationFrame(() => focusPane(newId));
+  store.save(true);
+}
+
 async function closePane(paneId: string): Promise<void> {
   const session = sessionOfPane(paneId);
   if (!session) return;
@@ -2798,6 +2819,10 @@ const settingsView = createSettingsView({
   onDeleteArchived: (id) => confirmCloseSession(id),
   onClose: closeSettings,
   onConfirm: (opts) => confirm.ask(opts),
+  onRunInTerminal: (command) => {
+    closeSettings();
+    runInNewPane(command);
+  },
 });
 
 const sessionSettings = createSessionSettings({

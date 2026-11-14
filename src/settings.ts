@@ -28,6 +28,7 @@ import { InboxKind, KIND_HINT, KIND_TITLE } from "./inbox";
 import { onHarnessState, runHarnessCheck } from "./harnessUpdates";
 import type { ConfirmOptions } from "./confirm";
 import { createDictationTab } from "./dictation/settingsTab";
+import { createAccountsTab } from "./accountsTab";
 import { DEFAULT_LIVE_MODEL, DEFAULT_VOICE, VOICES } from "./voice/liveSession";
 import { previewVoice, type VoicePreview } from "./voice/preview";
 import { clearSecret, hasSecret, saveSecret, secretInfo, storageLabel, testSecret, type SecretName } from "./secrets";
@@ -61,9 +62,11 @@ export interface SettingsHandlers {
   onClose(): void;
   /** The app's confirmation modal. */
   onConfirm(opts: ConfirmOptions): Promise<boolean>;
+  /** Close settings and run a command in a new terminal pane. */
+  onRunInTerminal(command: string): void;
 }
 
-type CatId = "appearance" | "ai" | "dictation" | "notifications" | "keyboard" | "sessions" | "about";
+type CatId = "appearance" | "accounts" | "ai" | "dictation" | "notifications" | "keyboard" | "sessions" | "about";
 
 const svg = (body: string) =>
   `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
@@ -74,6 +77,12 @@ const CATEGORIES: { id: CatId; label: string; desc: string; icon: string }[] = [
     label: "Appearance",
     desc: "Theme, fonts, shell and how your terminals look.",
     icon: svg('<circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/>'),
+  },
+  {
+    id: "accounts",
+    label: "Accounts",
+    desc: "Keep several subscriptions per agent and switch between them in one click.",
+    icon: svg('<circle cx="8" cy="5.8" r="2.6"/><path d="M3 13.2c.7-2.3 2.6-3.6 5-3.6s4.3 1.3 5 3.6"/>'),
   },
   {
     id: "ai",
@@ -467,6 +476,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
     }
     applyFilter();
     body.scrollTop = 0;
+    if (id === "accounts") void accountsTab.refresh();
   }
 
   /** Shows the active category — or, while searching, every section/row whose
@@ -756,6 +766,11 @@ export function createSettingsView(handlers: SettingsHandlers) {
     ui: { field, section, toggle, segmented, btn },
   });
   const harnessSection = buildHarnessSection();
+  // Built once too: it polls for new sign-ins while it's on screen.
+  const accountsTab = createAccountsTab({
+    confirm: (opts) => handlers.onConfirm(opts),
+    runInTerminal: (command) => handlers.onRunInTerminal(command),
+  });
 
   function buildUpdatesSection(): HTMLElement {
     const versionEl = document.createElement("code");
@@ -1347,6 +1362,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
     const s = draft;
     const cats: Record<CatId, HTMLElement[]> = {
       appearance: [],
+      accounts: [],
       ai: [],
       dictation: [],
       notifications: [],
@@ -1629,6 +1645,9 @@ export function createSettingsView(handlers: SettingsHandlers) {
         { keywords: "windows explorer" }
       )
     );
+
+    // ==================== Accounts ====================
+    cats.accounts.push(accountsTab.el);
 
     // ==================== AI & Agents ====================
     const resumeAgents = toggle(s.resumeAgentSessions, (v) => {

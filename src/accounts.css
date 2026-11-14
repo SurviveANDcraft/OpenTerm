@@ -1,0 +1,145 @@
+/* Settings → Accounts */
+
+.accounts-tab.busy {
+  pointer-events: none;
+}
+
+.accounts-tab.busy .acct-side {
+  opacity: 0.5;
+}
+
+.acct-section .settings-section-head {
+  align-items: center;
+  gap: 12px;
+}
+
+.acct-brand {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px solid var(--hairline);
+}
+
+.acct-brand svg {
+  width: 18px;
+  height: 18px;
+}
+
+.acct-section .settings-section-body {
+  padding-top: 12px;
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+}
+
+.acct-row:last-child,
+.acct-row:has(+ .acct-notice) {
+  border-bottom: none;
+}
+
+.acct-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.acct-row.active .acct-avatar {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.acct-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.acct-email {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acct-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acct-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: opacity var(--t-med);
+}
+
+.acct-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 13%, transparent);
+}
+
+.acct-active::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.acct-remove {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition:
+    opacity var(--t-med),
+    color var(--t-med),
+    background var(--t-med);
+}
+
+.acct-row:hover .acct-remove,
+.acct-remove:focus-visible {
+  opacity: 1;
+}
+
+.acct-remove:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.acct-notice {
+  padding: 8px 0 4px;
+  line-height: 1.45;
+}
