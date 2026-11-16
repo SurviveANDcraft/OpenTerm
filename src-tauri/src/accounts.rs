@@ -151,8 +151,23 @@ fn read_live(provider: Provider) -> Option<Live> {
                 .ok()
                 .and_then(|m| m.elapsed().ok())
                 .is_none_or(|age| age >= CLAUDE_SETTLE);
+            let mut id = format!("{uuid}:{}", text(&account, "organizationUuid"));
+            let mut account = account;
+            // A running Claude Code that renews its token writes it back to the
+            // credentials file, even after OpenTerm moved the profile to another
+            // account. Trust who the provider says owns the token over the profile.
+            if let Some(owner) = verified_owner(oauth.get("accessToken").and_then(Value::as_str).unwrap_or("")) {
+                if owner != id {
+                    // Unknown owner: it can't be labelled, so it isn't saved at all.
+                    let saved = store_root()
+                        .map(|r| file_for(&r.join(Provider::Claude.id()), &owner))
+                        .and_then(|f| load(&f))?;
+                    account = saved.payload.get("account")?.clone();
+                    id = owner;
+                }
+            }
             Some(Live {
-                id: format!("{uuid}:{}", text(&account, "organizationUuid")),
+                id,
                 email: text(&account, "emailAddress"),
                 plan: claude_plan(&oauth),
                 org: text(&account, "organizationName"),
@@ -217,6 +232,55 @@ fn read_live(provider: Provider) -> Option<Live> {
             })
         }
     }
+}
+
+// ------------------------------------------------------------------ verifying
+
+type Owners = Mutex<std::collections::HashMap<u64, String>>;
+
+/// Which account each Claude access token belongs to, as `<account>:<org>`,
+/// keyed by a hash of the token. Filled by `verify_claude` before every command.
+fn owners() -> &'static Owners {
+    static OWNERS: std::sync::OnceLock<Owners> = std::sync::OnceLock::new();
+    OWNERS.get_or_init(Default::default)
+}
+
+fn verified_owner(token: &str) -> Option<String> {
+    owners().lock().unwrap_or_else(|e| e.into_inner()).get(&hash(token)).cloned()
+}
+
+/// Asks Anthropic who owns the access token in Claude's credentials file,
+/// once per token. Offline or expired: nothing is learned and the profile in
+/// `.claude.json` is trusted, as before.
+async fn verify_claude() {
+    let Some(token) = Provider::Claude
+        .dir()
+        .and_then(|d| read_json(&d.join(".credentials.json")))
+        .and_then(|c| c.get("claudeAiOauth")?.get("accessToken")?.as_str().map(String::from))
+    else {
+        return;
+    };
+    if verified_owner(&token).is_some() {
+        return;
+    }
+    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(6)).build() else { return };
+    let sent = client
+        .get("https://api.anthropic.com/api/oauth/profile")
+        .bearer_auth(&token)
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .send()
+        .await;
+    let Ok(resp) = sent else { return };
+    if !resp.status().is_success() {
+        return;
+    }
+    let Ok(v) = resp.json::<Value>().await else { return };
+    let account = v.get("account").map(|a| text(a, "uuid")).unwrap_or_default();
+    if account.is_empty() {
+        return;
+    }
+    let org = v.get("organization").map(|o| text(o, "uuid")).unwrap_or_default();
+    owners().lock().unwrap_or_else(|e| e.into_inner()).insert(hash(&token), format!("{account}:{org}"));
 }
 
 // ------------------------------------------------------------------ writing
@@ -342,16 +406,33 @@ struct Saved {
 }
 
 fn store_dir(app: &AppHandle, provider: Provider) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("accounts").join(provider.id()))
+    let root = match STORE_ROOT.get() {
+        Some(r) => r.clone(),
+        None => {
+            let r = app.path().app_data_dir().map_err(|e| e.to_string())?.join("accounts");
+            STORE_ROOT.get_or_init(|| r).clone()
+        }
+    };
+    Ok(root.join(provider.id()))
+}
+
+fn hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+    }
+    h
 }
 
 /// Account ids hold emails and UUIDs; the file name is just a stable hash of one.
 fn file_for(dir: &Path, id: &str) -> PathBuf {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in id.bytes() {
-        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
-    }
-    dir.join(format!("{h:016x}.dpapi"))
+    dir.join(format!("{:016x}.dpapi", hash(id)))
+}
+
+static STORE_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn store_root() -> Option<&'static PathBuf> {
+    STORE_ROOT.get()
 }
 
 fn load(path: &Path) -> Option<Saved> {
@@ -464,45 +545,69 @@ fn list(app: &AppHandle) -> Result<Vec<ProviderAccounts>, String> {
 /// Every saved account per CLI, after saving whichever login is live now.
 /// That side effect is the whole "add account" story: sign in with the CLI and
 /// the new account shows up here.
-#[tauri::command(async)]
-pub fn accounts_list(app: AppHandle) -> Result<Vec<ProviderAccounts>, String> {
-    let _g = guard();
-    list(&app)
+#[tauri::command]
+pub async fn accounts_list(app: AppHandle) -> Result<Vec<ProviderAccounts>, String> {
+    blocking(app, |app| list(&app)).await
 }
 
-#[tauri::command(async)]
-pub fn accounts_switch(app: AppHandle, provider: Provider, id: String) -> Result<Vec<ProviderAccounts>, String> {
-    let _g = guard();
-    capture_live(&app, provider)?;
-    let target = load(&file_for(&store_dir(&app, provider)?, &id))
+/// Checks the live Claude token's owner, then runs `f` on a blocking thread
+/// under the lock (file I/O and DPAPI don't belong on the async runtime).
+async fn blocking<T: Send + 'static>(
+    app: AppHandle,
+    f: impl FnOnce(AppHandle) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let _ = store_dir(&app, Provider::Claude);
+    verify_claude().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _g = guard();
+        f(app)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn accounts_switch(app: AppHandle, provider: Provider, id: String) -> Result<Vec<ProviderAccounts>, String> {
+    blocking(app, move |app| switch(&app, provider, &id)).await
+}
+
+fn switch(app: &AppHandle, provider: Provider, id: &str) -> Result<Vec<ProviderAccounts>, String> {
+    capture_live(app, provider)?;
+    let target = load(&file_for(&store_dir(app, provider)?, id))
         .ok_or("That account is no longer saved. Sign in to it again.")?;
     apply(provider, &target.payload)?;
     crate::usage::forget_usage_limits();
-    list(&app)
+    list(app)
 }
 
 /// Forgets a saved account. The CLI's live login is never touched, so the
 /// account in use can't be removed here (it would just be saved again).
-#[tauri::command(async)]
-pub fn accounts_remove(app: AppHandle, provider: Provider, id: String) -> Result<Vec<ProviderAccounts>, String> {
-    let _g = guard();
+#[tauri::command]
+pub async fn accounts_remove(app: AppHandle, provider: Provider, id: String) -> Result<Vec<ProviderAccounts>, String> {
+    blocking(app, move |app| remove(&app, provider, &id)).await
+}
+
+fn remove(app: &AppHandle, provider: Provider, id: &str) -> Result<Vec<ProviderAccounts>, String> {
     if read_live(provider).is_some_and(|l| l.id == id) {
         return Err("Switch to another account first.".into());
     }
-    match fs::remove_file(file_for(&store_dir(&app, provider)?, &id)) {
+    match fs::remove_file(file_for(&store_dir(app, provider)?, id)) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.to_string()),
     }
-    list(&app)
+    list(app)
 }
 
 /// Gets a CLI ready for another sign-in and returns the command that starts
 /// one. The current login is saved first, so signing in over it loses nothing.
-#[tauri::command(async)]
-pub fn accounts_begin_login(app: AppHandle, provider: Provider) -> Result<String, String> {
-    let _g = guard();
-    capture_live(&app, provider)?;
+#[tauri::command]
+pub async fn accounts_begin_login(app: AppHandle, provider: Provider) -> Result<String, String> {
+    blocking(app, move |app| begin_login(&app, provider)).await
+}
+
+fn begin_login(app: &AppHandle, provider: Provider) -> Result<String, String> {
+    capture_live(app, provider)?;
     Ok(match provider {
         Provider::Claude => "claude auth login",
         Provider::Codex => "codex login",
