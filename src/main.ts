@@ -843,9 +843,9 @@ async function stopAgentInPane(paneId: string): Promise<boolean> {
 
 /** Types the agent's launch command back into a pane that's sitting at its
  *  shell prompt, resuming the conversation it was in. */
-async function relaunchAgentInPane(paneId: string, launchCommand: string): Promise<void> {
+async function relaunchAgentInPane(paneId: string, launchCommand: string, forceResume = false): Promise<void> {
   if (!panes.has(paneId)) return;
-  const cmd = (await resumeCommandFor(paneId, launchCommand)) ?? launchCommand;
+  const cmd = (await resumeCommandFor(paneId, launchCommand, forceResume)) ?? launchCommand;
   if (!panes.has(paneId)) return;
   // Newline separately, same reason as the command queue: a burst read in one
   // tick can swallow the submit.
@@ -975,8 +975,33 @@ function scanTaskDueDates(): void {
   }
 }
 
+/** The agent launch line of a pane, when it's running an agent CLI. */
+function paneAgentCommand(paneId: string): string | null {
+  const leaf = sessionOfPane(paneId) && (findLeaf(sessionOfPane(paneId)!.tree, paneId) as LeafNode | undefined);
+  if (!leaf || leaf.external || leaf.kind === "browser" || !leaf.lastCommand) return null;
+  return detectAgentCommand(leaf.lastCommand) ? leaf.lastCommand : null;
+}
+
+/** Right-click → Restart agent: quit the CLI and resume the same conversation,
+ *  always, whatever the resume setting says. Picks up a switched account. */
+async function restartAgentInPane(paneId: string): Promise<void> {
+  const command = paneAgentCommand(paneId);
+  if (!command) return;
+  if (!isShellPrompt(paneId) && !(await stopAgentInPane(paneId))) {
+    void confirm.ask({
+      title: "The agent didn't quit",
+      message: "Stop it yourself (Ctrl+C or /exit), then choose Restart agent again.",
+      confirmLabel: "OK",
+    });
+    return;
+  }
+  await relaunchAgentInPane(paneId, command, true);
+}
+
 function paneHandlers() {
   return {
+    canRestartAgent: (id: string) => paneAgentCommand(id) !== null,
+    onRestartAgent: (id: string) => void restartAgentInPane(id),
     onFocus: (id: string) => {
       const s = sessionOfPane(id);
       if (!s) return;
@@ -1254,8 +1279,8 @@ function rememberAgentCommand(paneId: string, line: string): void {
  *  last attached to and reopen *that* one by id (`claude --resume <id>`); only
  *  when no session was ever linked do we fall back to the generic `--continue`,
  *  which would otherwise hand every pane the same most-recent conversation. */
-async function resumeCommandFor(paneId: string, lastCommand: string): Promise<string | null> {
-  const resume = store.state.settings.resumeAgentSessions;
+async function resumeCommandFor(paneId: string, lastCommand: string, force = false): Promise<string | null> {
+  const resume = force || store.state.settings.resumeAgentSessions;
   const agent = detectAgentCommand(lastCommand);
   if (resume && agent) {
     const harness = AGENT_HARNESS[agent];
@@ -1960,7 +1985,8 @@ function runInNewPane(command: string): void {
   session.tree = splitLeaf(session.tree, anchorId, "row", newId);
   session.zoomed = null;
   rerender(session);
-  setTimeout(() => void writePty(newId, `${command}`), 700);
+  setTimeout(() => void writePty(newId, `${command}
+`), 700);
   requestAnimationFrame(() => focusPane(newId));
   store.save(true);
 }

@@ -130,6 +130,10 @@ export interface PaneHandlers {
   /** User renamed the pane from its right-click menu. `name` is empty to clear
    *  a custom name and fall back to the shell-reported title. */
   onRename(id: string, name: string): void;
+  /** Whether the pane is running an agent CLI that "Restart agent" can bring back. */
+  canRestartAgent(id: string): boolean;
+  /** Quit the agent CLI in the pane and start it again in the same conversation. */
+  onRestartAgent(id: string): void;
   /** Alt+click on a link in the terminal output: show the URL in an embedded
    *  browser pane rather than handing it to the OS browser. */
   onOpenBrowser(id: string, url: string): void;
@@ -391,14 +395,19 @@ export class PaneTerm {
     const ctxUsage = document.createElement("button");
     ctxUsage.className = "context-menu-item";
     ctxUsage.textContent = "Usage & Costs";
+    const ctxRestart = document.createElement("button");
+    ctxRestart.className = "context-menu-item";
+    ctxRestart.textContent = "Restart agent";
+    ctxRestart.title = "Quit the agent and resume the same conversation, e.g. after switching accounts";
     const ctxClose = document.createElement("button");
     ctxClose.className = "context-menu-item danger";
     ctxClose.textContent = "Close";
-    ctxMenu.append(ctxRename, ctxQueue, ctxUsage, ctxClose);
+    ctxMenu.append(ctxRename, ctxQueue, ctxUsage, ctxRestart, ctxClose);
     document.body.appendChild(ctxMenu);
 
     const closeCtxMenu = () => ctxMenu.classList.remove("visible");
     const openCtxMenu = (x: number, y: number) => {
+      ctxRestart.hidden = !handlers.canRestartAgent(id);
       ctxMenu.style.left = `${x}px`;
       ctxMenu.style.top = `${y}px`;
       ctxMenu.classList.add("visible");
@@ -446,6 +455,10 @@ export class PaneTerm {
     ctxUsage.addEventListener("click", () => {
       closeCtxMenu();
       handlers.onShowUsage(id, this.title);
+    });
+    ctxRestart.addEventListener("click", () => {
+      closeCtxMenu();
+      handlers.onRestartAgent(id);
     });
     ctxClose.addEventListener("click", () => {
       closeCtxMenu();
