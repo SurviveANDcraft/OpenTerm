@@ -569,7 +569,9 @@ export function createExplorer(handlers: ExplorerHandlers) {
   function render(): void {
     const q = filter.trim().toLowerCase();
     const rows = q && matches ? matches : flatten(rootNodes, q);
+    const scroll = list.scrollTop;
     list.replaceChildren(...rows.map(buildRow));
+    list.scrollTop = scroll;
     if (loadError) status.textContent = loadError;
     else status.textContent = rows.length === 0 ? (q ? "No matches" : rootPath ? "Empty folder" : "") : "";
   }
@@ -581,39 +583,149 @@ export function createExplorer(handlers: ExplorerHandlers) {
       return;
     }
     node.expanded = true;
-    if (node.children === null) {
-      node.loading = true;
+    if (node.children !== null) {
+      // Cached from an earlier expand: show it at once, then catch up with
+      // anything created or removed while it was collapsed.
       render();
-      try {
-        const listing = await invoke<{ path: string; entries: FileEntry[] }>("list_dir", {
-          path: node.entry.path,
-        });
-        node.children = listing.entries.map((e) => makeNode(e, node.depth + 1));
-      } catch {
-        node.children = []; // e.g. permission denied — show it as simply empty
-      }
-      node.loading = false;
+      void refresh(false);
+      return;
     }
+    node.loading = true;
     render();
+    try {
+      const listing = await invoke<{ path: string; entries: FileEntry[] }>("list_dir", {
+        path: node.entry.path,
+      });
+      node.children = listing.entries.map((e) => makeNode(e, node.depth + 1));
+    } catch {
+      node.children = []; // e.g. permission denied — show it as simply empty
+    }
+    node.loading = false;
+    if (renamingPath === null) render();
+  }
+
+  /** Bumped whenever the root is (re)loaded, so an in-flight refresh started
+   *  against the old tree drops its results instead of grafting them on. */
+  let rootGen = 0;
+  let refreshing = false;
+  /** A refresh asked for while one was running: null = none, else its `force`. */
+  let queuedForce: boolean | null = null;
+  /** What open() was asked for, so the button can retry a root that failed to load. */
+  let requestedRoot: string | null = null;
+
+  /** Merges a fresh listing into an existing level, keeping the node objects
+   *  (and so their expanded state and loaded children) for every entry that
+   *  is still there. Returns null when nothing changed. */
+  function reconcile(old: TreeNode[], entries: FileEntry[], depth: number): TreeNode[] | null {
+    const byPath = new Map(old.map((n) => [normalize(n.entry.path), n]));
+    let changed = old.length !== entries.length;
+    const next = entries.map((e, i) => {
+      const prev = byPath.get(normalize(e.path));
+      if (prev && prev.entry.is_dir === e.is_dir) {
+        if (prev.entry.name !== e.name || prev.entry.path !== e.path) {
+          prev.entry = e; // case-only rename
+          changed = true;
+        }
+        if (old[i] !== prev) changed = true;
+        return prev;
+      }
+      changed = true;
+      return makeNode(e, depth);
+    });
+    return changed ? next : null;
+  }
+
+  async function listDir(path: string): Promise<FileEntry[] | null> {
+    try {
+      const listing = await invoke<{ path: string; entries: FileEntry[] }>("list_dir", { path });
+      return listing.entries;
+    } catch {
+      return null; // gone or unreadable right now; leave that level as it was
+    }
+  }
+
+  /** Re-lists the root and every expanded folder, merging the results in place
+   *  so open folders stay open and the scroll position holds. Only re-renders
+   *  when something actually changed (or `force`, for the button). */
+  async function refresh(force: boolean): Promise<void> {
+    if (!rootPath) {
+      if (force) await loadRoot(requestedRoot);
+      return;
+    }
+    if (refreshing) {
+      queuedForce = (queuedForce ?? false) || force;
+      return;
+    }
+    refreshing = true;
+    const gen = rootGen;
+    let changed = false;
+    try {
+      const rootEntries = await listDir(rootPath);
+      if (gen !== rootGen) return;
+      if (rootEntries) {
+        const merged = reconcile(rootNodes, rootEntries, 0);
+        if (merged) {
+          rootNodes = merged;
+          changed = true;
+        }
+        if (loadError) {
+          loadError = null;
+          changed = true;
+        }
+      }
+      // Breadth-first over expanded folders, one level of listings at a time.
+      let level = rootNodes.filter((n) => n.expanded && n.children);
+      while (level.length) {
+        const listings = await Promise.all(level.map((n) => listDir(n.entry.path)));
+        if (gen !== rootGen) return;
+        const nextLevel: TreeNode[] = [];
+        level.forEach((n, i) => {
+          const entries = listings[i];
+          if (entries && n.children) {
+            const merged = reconcile(n.children, entries, n.depth + 1);
+            if (merged) {
+              n.children = merged;
+              changed = true;
+            }
+          }
+          for (const c of n.children ?? []) if (c.expanded && c.children) nextLevel.push(c);
+        });
+        level = nextLevel;
+      }
+      // Never re-render under an open rename box: it would blur and commit it.
+      if ((changed || force) && renamingPath === null) render();
+      if (filter.trim() && (changed || force)) refreshMatches();
+    } finally {
+      refreshing = false;
+      if (queuedForce !== null) {
+        const f = queuedForce;
+        queuedForce = null;
+        void refresh(f);
+      }
+    }
   }
 
   async function loadRoot(path: string | null): Promise<void> {
+    const gen = ++rootGen;
     loadError = null;
     render();
     try {
       const listing = await invoke<{ path: string; entries: FileEntry[] }>("list_dir", { path });
+      if (gen !== rootGen) return; // a newer open() superseded this one
       rootPath = listing.path;
       rootNodes = listing.entries.map((e) => makeNode(e, 0));
       rootLabel.textContent = baseName(rootPath) || rootPath;
       rootLabel.title = rootPath;
     } catch (e) {
+      if (gen !== rootGen) return;
       loadError = String(e);
       rootNodes = [];
     }
     render();
   }
 
-  refreshBtn.addEventListener("click", () => void loadRoot(rootPath));
+  // Refresh in place: re-list what's open, keep every expanded folder expanded.
+  refreshBtn.addEventListener("click", () => void refresh(true));
 
   /** Ranks every file under the root against the filter (fuzzy, gitignore
    *  aware). Until the first answer lands the expanded levels filter as before. */
@@ -626,31 +738,60 @@ export function createExplorer(handlers: ExplorerHandlers) {
       render();
       return;
     }
-    const root = rootPath;
-    filterTimer = window.setTimeout(() => {
-      void invoke<{ root: string; rel: string; positions: number[] }[]>("search_file_names", {
-        query: q,
-        roots: [root],
-        limit: 150,
-      })
-        .then((hits) => {
-          if (my !== filterToken) return;
-          const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
-          matches = hits.map((h) => {
-            const name = h.rel.split("/").pop() || h.rel;
-            const dirLen = h.rel.length - name.length;
-            const path = root.replace(/[\\/]+$/, "") + sep + h.rel.split("/").join(sep);
-            const node = makeNode({ name, path, is_dir: false }, 0);
-            const hit = new Set(h.positions.filter((p) => p >= dirLen).map((p) => p - dirLen));
-            matchInfo.set(node, { dir: h.rel.slice(0, Math.max(0, dirLen - 1)), hit });
-            return node;
-          });
-          render();
-        })
-        .catch(() => {});
-    }, 50);
+    filterTimer = window.setTimeout(() => searchMatches(q, my, false), 50);
     render();
   }
+
+  /** Last applied search answer, so a background re-run that comes back with
+   *  the same hits doesn't rebuild the list. */
+  let matchesKey = "";
+
+  function searchMatches(q: string, my: number, quiet: boolean): void {
+    const root = rootPath;
+    if (!root) return;
+    void invoke<{ root: string; rel: string; positions: number[] }[]>("search_file_names", {
+      query: q,
+      roots: [root],
+      limit: 150,
+    })
+      .then((hits) => {
+        if (my !== filterToken || root !== rootPath) return;
+        const key = hits.map((h) => `${h.rel}:${h.positions.join(",")}`).join("|");
+        if (quiet && key === matchesKey) return;
+        matchesKey = key;
+        const sep = root.includes("/") && !root.includes("\\") ? "/" : "\\";
+        matches = hits.map((h) => {
+          const name = h.rel.split("/").pop() || h.rel;
+          const dirLen = h.rel.length - name.length;
+          const path = root.replace(/[\\/]+$/, "") + sep + h.rel.split("/").join(sep);
+          const node = makeNode({ name, path, is_dir: false }, 0);
+          const hit = new Set(h.positions.filter((p) => p >= dirLen).map((p) => p - dirLen));
+          matchInfo.set(node, { dir: h.rel.slice(0, Math.max(0, dirLen - 1)), hit });
+          return node;
+        });
+        if (renamingPath === null) render();
+      })
+      .catch(() => {});
+  }
+
+  /** Re-runs the active filter in the background after the tree changed. */
+  function refreshMatches(): void {
+    const q = filter.trim();
+    if (q && rootPath) searchMatches(q, filterToken, true);
+  }
+
+  // Agents create and delete files constantly, so keep the tree in step while
+  // it is on screen. Paused when the Files view is hidden or the window is in
+  // the background; refocusing the window catches up immediately.
+  const POLL_MS = 1500;
+  const isShown = () =>
+    document.visibilityState === "visible" && el.isConnected && el.getClientRects().length > 0;
+  window.setInterval(() => {
+    if (isShown()) void refresh(false);
+  }, POLL_MS);
+  window.addEventListener("focus", () => {
+    if (isShown()) void refresh(false);
+  });
 
   searchInput.addEventListener("input", () => {
     filter = searchInput.value;
@@ -667,6 +808,7 @@ export function createExplorer(handlers: ExplorerHandlers) {
     searchInput.value = "";
     matches = null;
     filterToken++;
+    requestedRoot = initialPath;
     void loadRoot(initialPath);
   }
 
