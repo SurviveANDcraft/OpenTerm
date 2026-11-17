@@ -451,6 +451,7 @@ export const ACTIONS = {
   openTasks: "Open tasks",
   openInbox: "Open inbox",
   toggleAgents: "Toggle Agents panel",
+  toggleWorkspace: "Switch Panes ⇄ Threads",
   restoreLast: "Undo last close (session, pane or task)",
   paste: "Paste",
 } as const;
@@ -490,6 +491,7 @@ export const DEFAULT_KEYBINDS: Record<Action, string> = {
   openTasks: "Ctrl+Shift+K",
   openInbox: "Ctrl+Shift+I",
   toggleAgents: "Ctrl+Shift+A",
+  toggleWorkspace: "Ctrl+Shift+Space",
   restoreLast: "Ctrl+Shift+U",
   // Last on purpose: a saved setup that already gave Ctrl+Shift+V to another
   // action keeps that action, since the first match wins (see actionForChord).
@@ -637,6 +639,8 @@ export interface Settings {
    *  Stamped on finish *and* on skip, so the flow can't reappear uninvited.
    *  Settings → About & Data can clear it by replaying the welcome. */
   onboardedAt: number | null;
+  /** Threads mode (agents as conversations) and what its agents may use. */
+  threads: ThreadsSettings;
   /** What the title bar shows, in order. Every known widget is listed once;
    *  `on: false` keeps its place for when it's switched back on. */
   titlebarWidgets: TitlebarWidget[];
@@ -689,6 +693,33 @@ export function normalizeTitlebarWidgets(list: unknown): TitlebarWidget[] {
 export type AssistantMode = "ask" | "act" | "auto";
 
 /** Areas of the app the assistant can be allowed into (Settings, AI). */
+/** Tool groups a thread agent can be given: OpenTerm's own (served over the
+ *  local MCP server) and Claude Code built-ins that cost context. A missing
+ *  key counts as on. */
+export type ThreadToolGroup =
+  | "images"
+  | "terminals"
+  | "layout"
+  | "input"
+  | "sessions"
+  | "tasks"
+  | "ui"
+  | "media"
+  | "usage"
+  | "settings"
+  | "web"
+  | "subagents"
+  | "skills"
+  | "userMcp";
+
+export interface ThreadsSettings {
+  /** The Threads tab in the sidebar toggle. */
+  enabled: boolean;
+  /** The Sessions tab. At least one of the two stays on. */
+  sessionsTab: boolean;
+  tools: Partial<Record<ThreadToolGroup, boolean>>;
+}
+
 export type AssistantPerm = "layout" | "input" | "tasks" | "sessions" | "ui" | "media" | "settings" | "usage";
 
 export const SIDEBAR_WIDTH_MIN = 180;
@@ -753,6 +784,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keybinds: { ...DEFAULT_KEYBINDS },
   dictation: structuredClone(DEFAULT_DICTATION),
   onboardedAt: null,
+  threads: { enabled: true, sessionsTab: true, tools: {} },
   titlebarWidgets: normalizeTitlebarWidgets([]),
   mediaOnlyWhilePlaying: false,
   timerAnimation: true,

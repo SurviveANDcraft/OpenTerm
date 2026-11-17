@@ -3023,6 +3023,7 @@ dependencies = [
  "base64 0.22.1",
  "cpal",
  "flacenc",
+ "getrandom 0.2.17",
  "ignore",
  "image",
  "memchr",

@@ -43,6 +43,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 // ScreenToClient is imported from Graphics::Gdi above.
 
 mod accounts;
+mod agent_host;
+mod app_mcp;
 mod agent_hooks;
 mod assistant;
 mod browser;
@@ -823,6 +825,29 @@ async fn name_notification(app: AppHandle, context: String) -> Result<String, St
     openrouter_chat(&key, NAME_SYSTEM, &context, 300, 20).await
 }
 
+/// A short title for a Threads conversation, from its opening message (and,
+/// when renaming later, what the agent has said since).
+#[tauri::command]
+async fn name_thread(app: AppHandle, context: String) -> Result<String, String> {
+    const SYSTEM: &str = "You name chat conversations between a developer and a coding agent. Reply with ONLY the title: 2 to 6 words, sentence case, no quotes, no trailing punctuation, no emoji. Name the task, not the request style (\"Fix login redirect loop\", not \"User asks about login\"). Keep file, feature or library names exactly as written. If the message is only a greeting or too vague, reply \"New conversation\".";
+    let key = secrets::Vault::new(&app)?.require(secrets::Secret::OpenRouter)?;
+    let raw = openrouter_chat(&key, SYSTEM, &context, 40, 15).await?;
+    let title: String = raw
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '*' || c == '#' || c == '.')
+        .trim()
+        .chars()
+        .take(80)
+        .collect();
+    if title.is_empty() {
+        return Err("empty title".into());
+    }
+    Ok(title)
+}
+
 /// Shared OpenRouter chat-completion call: one system prompt, one user message,
 /// content string back. Errors carry the HTTP status and OpenRouter's own
 /// message so a bad key or a rate limit is distinguishable in the UI.
@@ -922,6 +947,44 @@ fn read_text_file(path: String) -> Result<String, String> {
     }
     fs::read_to_string(&path)
         .map_err(|_| "Can't preview this file (not text, or unsupported encoding).".to_string())
+}
+
+/// For each path: 0 missing, 1 file, 2 folder. Lets a Threads chat turn the
+/// paths an agent mentions into links only when they really exist.
+#[tauri::command]
+fn paths_kind(paths: Vec<String>) -> Vec<u8> {
+    paths
+        .iter()
+        .take(400)
+        .map(|p| match fs::metadata(p) {
+            Ok(m) if m.is_dir() => 2,
+            Ok(_) => 1,
+            Err(_) => 0,
+        })
+        .collect()
+}
+
+/// Saves a file pasted into a Threads chat (clipboard data has no path) under
+/// the temp folder, so the agent can open it like any other attachment.
+#[tauri::command]
+fn save_attachment(name: String, data: String) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') { c } else { '_' })
+        .collect();
+    let safe = if safe.trim().is_empty() { "file".to_string() } else { safe };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join("openterm-attachments").join(stamp.to_string());
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(safe);
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Reads a whole file as base64, for previewing formats the frontend has to
@@ -1818,6 +1881,19 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_mcp::app_mcp_start,
+            app_mcp::app_mcp_result,
+            agent_host::agent_host_locate,
+            agent_host::agent_host_spawn,
+            agent_host::agent_host_write,
+            agent_host::agent_host_kill,
+            agent_host::agent_host_running,
+            agent_host::thread_journal_read,
+            agent_host::thread_journal_append,
+            agent_host::thread_journal_delete,
+            agent_host::threads_index_load,
+            agent_host::threads_index_save,
+            agent_host::thread_git_branch,
             spawn_pty,
             write_pty,
             command_exists,
@@ -1831,6 +1907,7 @@ fn main() {
             find_in_backups,
             enhance_prompt,
             name_notification,
+            name_thread,
             accounts::accounts_list,
             accounts::accounts_switch,
             accounts::accounts_remove,
@@ -1843,6 +1920,8 @@ fn main() {
             list_dir,
             read_text_file,
             read_file_base64,
+            save_attachment,
+            paths_kind,
             write_text_file,
             reveal_in_explorer,
             open_url,
@@ -1931,6 +2010,8 @@ fn main() {
                 dictation::host::on_main_exit();
                 // Same for embedded browser webviews (they're children too).
                 browser::destroy_all();
+                // Headless Threads agents end with the app, like terminals do.
+                agent_host::kill_all();
                 if let Some(m) = app.try_state::<PtyManager>() {
                     let mut map = m.0.lock().unwrap();
                     for (_, h) in map.iter_mut() {

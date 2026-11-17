@@ -46,6 +46,7 @@
     "codemirror": "^6.0.2",
     "dompurify": "^3.4.13",
     "mammoth": "^1.12.1",
+    "marked": "^15.0.12",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

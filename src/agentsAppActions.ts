@@ -227,6 +227,11 @@ export function appToolDefs(actions: boolean, can: (perm: AssistantPerm) => bool
   return APP_TOOLS.filter((t) => (t.read || actions) && can(t.perm)).map((t) => t.def);
 }
 
+/** Which permission area an app tool belongs to. */
+export function appToolPerm(name: string): AssistantPerm | null {
+  return BY_NAME.get(name)?.perm ?? null;
+}
+
 export function isAppRead(name: string): boolean {
   return BY_NAME.get(name)?.read === true;
 }

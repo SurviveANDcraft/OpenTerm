@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { TOOL_GROUPS } from "./threads/toolGroups";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { store } from "./store";
 import {
@@ -66,7 +67,7 @@ export interface SettingsHandlers {
   onRunInTerminal(command: string): void;
 }
 
-type CatId = "appearance" | "accounts" | "ai" | "dictation" | "notifications" | "keyboard" | "sessions" | "about";
+type CatId = "appearance" | "accounts" | "ai" | "threads" | "dictation" | "notifications" | "keyboard" | "sessions" | "about";
 
 const svg = (body: string) =>
   `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
@@ -89,6 +90,12 @@ const CATEGORIES: { id: CatId; label: string; desc: string; icon: string }[] = [
     label: "AI & Agents",
     desc: "Agent conversations, OpenRouter and agent CLI versions.",
     icon: svg('<path d="M8 2l1.3 3.7L13 7l-3.7 1.3L8 12l-1.3-3.7L3 7l3.7-1.3z"/>'),
+  },
+  {
+    id: "threads",
+    label: "Threads",
+    desc: "Agents as conversations: show or hide the mode, and pick the tools its agents get.",
+    icon: svg('<path d="M2.5 4.3a1.8 1.8 0 0 1 1.8-1.8h7.4a1.8 1.8 0 0 1 1.8 1.8v4.9a1.8 1.8 0 0 1-1.8 1.8H7.2L4.3 13.3V11h0a1.8 1.8 0 0 1-1.8-1.8z"/><path d="M5.5 6h5M5.5 8.2h3"/>'),
   },
   {
     id: "dictation",
@@ -1364,6 +1371,7 @@ export function createSettingsView(handlers: SettingsHandlers) {
       appearance: [],
       accounts: [],
       ai: [],
+      threads: [],
       dictation: [],
       notifications: [],
       keyboard: [],
@@ -1908,6 +1916,81 @@ export function createSettingsView(handlers: SettingsHandlers) {
     );
 
     cats.ai.push(harnessSection);
+
+    // ==================== Threads ====================
+    const th = {
+      enabled: s.threads?.enabled !== false,
+      sessionsTab: s.threads?.sessionsTab !== false,
+      tools: { ...(s.threads?.tools ?? {}) },
+    };
+    const setTh = (p: Partial<typeof th>): void => {
+      Object.assign(th, p);
+      s.threads = { enabled: th.enabled, sessionsTab: th.sessionsTab, tools: { ...th.tools } };
+      markDirty();
+    };
+    cats.threads.push(
+      section(
+        "Threads",
+        "Agents as conversations, next to the pane layout. Switch with the Sessions, Threads, Files toggle at the top of the sidebar.",
+        [
+          field(
+            "Show Threads",
+            toggle(th.enabled, (v) => {
+              setTh({ enabled: v, sessionsTab: v ? th.sessionsTab : true });
+              render();
+            }),
+            { desc: "Off hides the Threads tab. Your threads are kept for when you turn it back on.", keywords: "threads chat mode enable disable conversations" }
+          ),
+          field(
+            "Show Sessions",
+            toggle(th.sessionsTab, (v) => {
+              setTh({ sessionsTab: v, enabled: v ? th.enabled : true });
+              render();
+            }),
+            { desc: "Off hides the Sessions tab for a chat-only OpenTerm. Terminals you already have keep running.", keywords: "sessions panes terminals hide" }
+          ),
+        ],
+        { keywords: "threads sessions mode tabs" }
+      )
+    );
+    const groupRows = (kind: "openterm" | "builtin") =>
+      TOOL_GROUPS.filter((g) => g.kind === kind).map((g) =>
+        field(
+          g.label,
+          toggle(th.tools[g.id] !== false, (v) => setTh({ tools: { ...th.tools, [g.id]: v } })),
+          { desc: g.desc, keywords: "threads agent tools " + g.label.toLowerCase() }
+        )
+      );
+    const presets = document.createElement("div");
+    presets.className = "th-presets";
+    const onCount = TOOL_GROUPS.filter((g) => th.tools[g.id] !== false).length;
+    for (const [label, tools] of [
+      ["Everything", {}],
+      ["Minimal", Object.fromEntries(TOOL_GROUPS.map((g) => [g.id, g.id === "images"]))],
+    ] as const) {
+      const b = document.createElement("button");
+      b.className = "btn-secondary";
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        setTh({ tools: { ...tools } });
+        render();
+      });
+      presets.appendChild(b);
+    }
+    cats.threads.push(
+      section(
+        "Agent tools",
+        `What thread agents can use beyond reading and editing code. Every tool's description is sent with every request, so fewer tools save usage on smaller plans. ${onCount} of ${TOOL_GROUPS.length} on. Applies from the agent's next message.`,
+        [field("Preset", presets, { desc: "Minimal keeps only Show images.", keywords: "threads tools preset minimal everything" }), ...groupRows("openterm")],
+        { keywords: "threads agent tools mcp openterm" }
+      )
+    );
+    cats.threads.push(
+      section("Claude Code extras", "Built-in tools and your own MCP servers. Switching them off removes them from the agent's context entirely.", groupRows("builtin"), {
+        keywords: "threads claude tools web subagents skills mcp",
+      })
+    );
 
     // ==================== Dictation ====================
     cats.dictation.push(dictationTab.render());

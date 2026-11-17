@@ -90,6 +90,7 @@ export function createTitlebar(actions: TitlebarActions) {
     clock: clockEl,
   };
   const seps: HTMLElement[] = [];
+  let titleOverride: (() => { name: string; path: string } | null) | null = null;
   let layoutSig = "";
 
   function visible(id: TitlebarWidgetId): boolean {
@@ -212,7 +213,13 @@ export function createTitlebar(actions: TitlebarActions) {
    *  from every place that already refreshes the sidebar. */
   function refresh(): void {
     const s = store.state.sessions.find((x) => x.id === store.state.activeSessionId);
-    if (s) {
+    const o = titleOverride?.();
+    if (o) {
+      dot.style.background = "var(--accent)";
+      dot.classList.remove("hidden");
+      nameEl.textContent = o.name;
+      pathEl.textContent = o.path ? prettyPath(o.path) : "";
+    } else if (s) {
       dot.style.background = s.color;
       dot.classList.remove("hidden");
       nameEl.textContent = s.name;
@@ -237,6 +244,11 @@ export function createTitlebar(actions: TitlebarActions) {
   return {
     el,
     refresh,
+    /** Threads mode names the active thread instead of the session. */
+    setTitleOverride(fn: (() => { name: string; path: string } | null) | null): void {
+      titleOverride = fn;
+      refresh();
+    },
     applyWidgets,
     /** The expanded Now playing view is open (it overlaps the panes). */
     mediaOpen: () => nowPlaying.isOpen() || timer.isOpen(),

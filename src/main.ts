@@ -146,6 +146,12 @@ import {
   takeLaunchFolder,
 } from "./folderLaunch";
 import { hasSecret, onSecretsChange } from "./secrets";
+import { createThreadsMode } from "./threads/mode";
+import { initAppTools } from "./threads/appTools";
+import { engine as threadEngine } from "./threads/engine";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { openExternalUrl } from "./terminals";
+import { playAttentionChime } from "./attention";
 
 /** Ceiling on how much of a terminal's tail can be handed over on an Alt+drag
  *  context drop. The actual amount used is min(this, the pane's scrollback
@@ -192,6 +198,8 @@ const sidebarResizer = document.createElement("div");
 sidebarResizer.className = "sidebar-resizer";
 
 let settingsOpen = false;
+/** Threads mode (chat-style agents), created in boot() once the shell exists. */
+let threadsMode: ReturnType<typeof createThreadsMode> | null = null;
 let fileViewerOpen = false;
 let openFileName = "";
 let openFilePath = "";
@@ -2264,6 +2272,7 @@ function zoomPaneById(id: string): void {
 
 function applySettingsLive(): void {
   const s = store.state.settings;
+  threadsMode?.applySettings();
   applyTheme(s.theme);
   syncPaneThemes();
   document.documentElement.style.setProperty("--pane-pad", `${s.padding}px`);
@@ -2537,7 +2546,33 @@ function altDuplicate(action: Action, e?: KeyboardEvent): boolean {
   return !(store.state.settings.keybinds[action] ?? "").includes("Alt");
 }
 
+/** Pane-only actions do nothing while Threads is on screen; session actions
+ *  act on threads instead. */
+const PANE_ONLY: ReadonlySet<Action> = new Set<Action>([
+  "closeSession", "splitRight", "splitDown", "closePane", "focusLeft", "focusRight", "focusUp", "focusDown",
+  "resizeLeft", "resizeRight", "resizeUp", "resizeDown", "zoomPane", "foldPane", "search", "queueCommand",
+]);
+
+function runThreadsAction(action: Action): boolean {
+  if (action === "toggleWorkspace") {
+    void threadsMode?.toggle();
+    return true;
+  }
+  if (!threadsMode?.isThreads()) return false;
+  if (action === "newSession" || action === "newTerminal") void threadsMode.newThread();
+  else if (action === "nextSession") threadsMode.cycle(1);
+  else if (action === "prevSession") threadsMode.cycle(-1);
+  else if (action === "renameSession") threadsMode.rename();
+  else if (action === "fontInc" || action === "fontDec" || action === "fontReset") {
+    const step = action === "fontInc" ? 1 : action === "fontDec" ? -1 : 0;
+    if (!bumpEditorFont(step)) threadsMode.zoom(step);
+  }
+  else return PANE_ONLY.has(action);
+  return true;
+}
+
 function runAction(action: Action, e?: KeyboardEvent): void {
+  if (runThreadsAction(action)) return;
   const session = activeSession();
   const focused = session ? focusedPane.get(session.id) : undefined;
   switch (action) {
@@ -2967,7 +3002,7 @@ const inboxPanel = createInboxPanel({
   onReviewGithub: (item, agent) => void reviewGithubWithAgent(item, agent),
 });
 
-const agentsPanel = createAgentsPanel({
+const agentsHost: Parameters<typeof createAgentsPanel>[0] = {
   focusPane: (sessionId, paneId) => {
     if (store.state.activeSessionId !== sessionId) setActiveSession(sessionId);
     requestAnimationFrame(() => focusPane(paneId));
@@ -3060,7 +3095,8 @@ const agentsPanel = createAgentsPanel({
       },
     },
   },
-});
+};
+const agentsPanel = createAgentsPanel(agentsHost);
 
 const fileViewer = createFileViewerPanel({ onRequestClose: () => void requestCloseFile() });
 
@@ -3636,6 +3672,12 @@ window.addEventListener(
     }
     // Alt+1..9 → jump to session
     if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
+      if (threadsMode?.isThreads()) {
+        e.preventDefault();
+        e.stopPropagation();
+        threadsMode.selectIndex(Number(e.key) - 1);
+        return;
+      }
       const s = visibleSessions()[Number(e.key) - 1];
       if (s) {
         e.preventDefault();
@@ -3771,6 +3813,7 @@ window.addEventListener("resize", () => {
 // every toggle point — cheap, and immune to future panels forgetting to notify.
 function anyOverlayOpen(): boolean {
   return (
+    !!threadsMode?.isThreads() ||
     settingsOpen ||
     fileViewerOpen ||
     wizard.isOpen() ||
@@ -3995,6 +4038,38 @@ async function boot(): Promise<void> {
   );
   // After #app, so its CSS can key off the panel being closed.
   document.body.append(agentsPanel.edge);
+  initAppTools(agentsHost.actions);
+  threadsMode = createThreadsMode({
+    sidebarEl: sidebar.el,
+    mainEl: main,
+    appEl: root,
+    defaultCwd: () => activeSession()?.cwd ?? null,
+    pickFolder: async (current) => {
+      const picked = await openFolderDialog({ directory: true, defaultPath: current ?? undefined, title: "Choose the thread's folder" });
+      return typeof picked === "string" ? picked : null;
+    },
+    openFile: (path) => void openFile(path, path.split(/[\\/]/).pop() ?? path),
+    openUrl: (url) => openExternalUrl(url),
+    resumeInTerminal: (agent, sessionId, cwd) => resumeChat(agent, sessionId, cwd),
+    confirm: (opts) => confirm.ask({ ...opts, cancelLabel: "Cancel" }),
+    chime: () => {
+      if (store.state.settings.soundNotifications) playAttentionChime();
+    },
+    chord: (action) => prettyChord(store.state.settings.keybinds[action === "toggleWorkspace" ? "toggleWorkspace" : "newSession"]),
+    onModeChange: (mode) => {
+      titlebar.setTitleOverride(mode === "threads" ? () => threadsMode?.titleInfo() ?? null : null);
+      syncAllExternal();
+      if (mode === "panes") {
+        const s = activeSession();
+        if (s) fitSessionSoon(s);
+        restorePaneFocus();
+      } else (document.activeElement as HTMLElement | null)?.blur?.();
+      updateChrome();
+    },
+  });
+  threadEngine.onList(() => {
+    if (threadsMode?.isThreads()) titlebar.refresh();
+  });
   setupSidebarResize();
 
   applySettingsLive();
